@@ -1,0 +1,192 @@
+[read str filename]:
+  (reading characters)
+  i: 0 (i is index of the current character)
+  line: 1
+  col: 0
+  char: ''
+
+  [peek]:
+    and [< [+ i char.length] str.length]
+        [str.utf8-char-at [+ i char.length]]
+
+  [advance]:
+    assert [not [is? char false]] 'passed the end'
+    (advance source location tracking)
+    when
+      [is? char '\n']:
+        set line [+ line 1]
+        set col 1
+      else:
+        set col [+ col 1]
+    (advance character)
+    len: char.length
+    set char [peek]
+    set i [+ i len]
+
+  [advance]
+
+  (reading text)
+  emit-index: 0
+  [pending-text]:   str.substring emit-index i
+  [discard]:        set emit-index i
+
+  (character types)
+  [is-char? c]:        [= c char]
+  [is-in? pat-str]:    and char [pat-str.contains? char]
+  [is-space?]:         is-in? ' \t'
+  [begins-word?]:      and char [not [is-in? '\n\t :[]()\'']]
+  [continues-word?]:   and char [not [is-in? '\n\t .:[]()\'']]
+  [begins-number?]:    and char [is-in? '-0123456789']
+  [continues-number?]: and char [not [is-in? '\n\t :[]()\'']]
+
+  (output)
+  tokens: [#array]
+  [emit token]:
+    location: #location filename line col
+    tokens.push [#token-node token location]
+    [discard]
+
+  [skip-space]:
+    when
+      [is-space?]:
+        [advance]
+        [skip-space]
+      else:
+        [discard]
+
+  [skip-comment]:
+    [advance]
+    depth: 1
+    while [depth .> 0]:
+      when
+        [is-char? '(']:
+          set depth [depth .+ 1]
+        [is-char? ')']:
+          set depth [depth .- 1]
+      [advance]
+    [discard]
+
+  [skip-space-and-comments]:
+    while [or [is-space?] [is-char? '(']]:
+      [skip-space]
+      when [is-char? '(']:
+        [skip-comment]
+
+  (tracking indentation)
+  indent-levels: [#array -1]
+  paren-level: 0
+  [current-indent]: indent-levels.peek
+
+  (reading)
+  [read-new-line]:
+    (measure indentation)
+    [read-whitespace]:
+      when [and char [is-space?]]:
+        [advance]
+        [read-whitespace]
+    [read-whitespace]
+    indent: [pending-text].length
+    [discard]
+    [skip-space-and-comments]
+    when
+      [is-char? '\n']:
+        [advance]
+        [discard]
+        [read-new-line]
+      [and char [<= paren-level 0]]:
+        when [< [current-indent] indent]:
+          indent-levels.push indent
+          emit '[indent]'
+        [unindent-loop]:
+          when [< indent [current-indent]]:
+            indent-levels.pop
+            emit '[unindent]'
+            [unindent-loop]
+        [unindent-loop]
+        emit '[line]'
+
+  [read-word]:
+    [advance]
+    while [continues-word?]:
+      [advance]
+    when [and [is-char? '.'] [= '.' [peek]]]:
+      [advance]
+      [advance]
+    emit [pending-text]
+
+  [read-number]:
+    [advance]
+    while [continues-number?]:
+      [advance]
+    emit [pending-text]
+
+  [read-string]:
+    out: [#array]
+    [put str]:
+      assert [#string.? str] 'tried to put non-string in read-string'
+      out.push str
+
+    [advance]
+    put '\''
+    escaping: false
+    
+    while [or escaping [not [is-char? '\'']]]:
+      when
+        escaping: 
+          when [is-char? 'n']: [put '\n']
+               [is-char? 't']: [put '\t']
+               else:           [put char]
+          set escaping false
+        else:
+          when
+            [is-char? '\\']: set escaping true
+            else:            put char
+      [advance]
+
+    [advance]
+    put '\''
+    emit out.concat
+
+  [read-token]:
+    [skip-space]
+    when
+      [begins-number?]:  [read-number]
+      [begins-word?]:    [read-word]
+      [is-char? '\'']:   [read-string]
+      [is-char? '(']:    [skip-comment]
+      [is-char? '[']:
+        [advance]
+        set paren-level [+ paren-level 1]
+        emit [pending-text]
+      [is-char? ']']:
+        [advance]
+        set paren-level [- paren-level 1]
+        emit [pending-text]
+      [is-char? ':']:
+        [advance]
+        emit [pending-text]
+      [is-char? '\n']:
+        [advance]
+        [discard]
+        [read-new-line]
+      else:
+        assert false [combine-strings 'unknown character: ' char]
+      
+  [read-new-line]
+  [skip-space]
+
+  while char:
+    [read-token]
+    [skip-space]
+
+  [unindent-loop]:
+    when [1 .< indent-levels.length]:
+      emit '[unindent]'
+      indent-levels.pop
+      [unindent-loop]
+  [unindent-loop]
+
+  tokens
+
+#
+  .read: read

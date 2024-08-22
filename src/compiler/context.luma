@@ -1,0 +1,28 @@
+#context: #
+  [. .? a]: has? a #context
+  [.]: #context false
+  [. parent]: #
+    #context
+    .parent: parent
+    .scope: [#hash]
+
+  [self.add key value]:
+    assert [#string.? key] 'expected string as key'
+    assert [not [self.scope.has? key]] 'duplicate entry in context'
+    self.scope.set key value
+  
+  [self.lookup key location]:
+    result: [self.lookup-recursively key]
+    when [not result]:
+      error-at [#word-node key location] [combine-strings 'missing in context: ' key]
+    result
+
+  [self.has? key]:
+    not [not [self.lookup-recursively key]]
+
+  [self.lookup-recursively key]:
+    or [self.scope.get-or key false]
+       and self.parent [self.parent.lookup-recursively key]
+
+#
+  .#context: #context

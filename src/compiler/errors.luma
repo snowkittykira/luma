@@ -1,0 +1,9 @@
+[error-at node message]:
+  assert false [combine-strings message ' at ' node.location.to-string]
+
+[assert-at condition node message]:
+  when [not condition]: [error-at node message]
+
+#
+  .error-at: error-at
+  .assert-at: assert-at

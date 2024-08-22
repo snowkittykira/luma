@@ -1,0 +1,64 @@
+[remove-item list item]:
+  when
+    list.empty?:
+      assert false 'tried to remove non-existent item'
+    [= list.first item]:
+      list.rest
+    else:
+      #list.link list.first [remove-item list.rest item]
+
+[contains? list item]:
+  if list.empty?
+    false
+    or [= item list.first] [contains? list.rest item]
+    
+[is-word? exp id]:
+  and [#word-node.? exp] [= exp.id id]
+
+[link root-node]:
+  modules-linked: [#list]
+  cycling: [#list]
+  result: [#array]
+
+  [scan-module-for-imports exp]:
+    assert-at [#list-node.? exp] exp 'top level of module should be a list'
+    exp.items.each [. item]:
+      when [and [#apply-node.? item] [is-word? [item.items.get 0] 'import']]:
+        assert-at [= 2 item.items.length] item 'import should take one argument'
+        name: item.items.get 1
+        assert-at [#string-node.? name] item 'import should be given a string literal'
+        import-module name.value
+
+  [import-module name]:
+    internal: combine-strings '&modules/' name
+    when [not [contains? modules-linked name]]:
+      when [contains? cycling name]:
+        assert false [combine-strings 'cycle in import of ' name]
+      set modules-linked [#list.link name modules-linked]
+      set cycling [#list.link name modules-linked]
+
+      filename: combine-strings name '.luma'
+      str: read-file filename
+      tokens: read str filename
+      mod: resolve [parse tokens]
+      scan-module-for-imports mod
+      assert-at [mod.items.length .> 0] mod 'empty module (todo: does this ever fire?)'
+
+      result.push [#pair-node [#word-node internal] mod]
+
+      exports-table: mod.items.last
+      assert-at [#table-node.? exports-table] exports-table 'modules need to end in a literal table'
+      exports-table.items.each [. entry]:
+        assert-at [#pair-node.? entry] entry 'unknown item in module exports'
+        assert-at [#symbol-node.? entry.key] entry.key 'unknown pair key in module exports'
+        result.push
+          #pair-node [#word-node [entry.key.id.substring 1 entry.key.id.length]]
+                     #apply-node [#list [#word-node internal] [#symbol-node entry.key.id]]
+      set cycling [remove-item cycling name]
+
+  [scan-module-for-imports root-node]
+  result.push root-node
+  [#list-node result]
+    
+#
+  .link: link

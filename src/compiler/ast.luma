@@ -1,0 +1,220 @@
+[space-separate items]:
+  out: [#array]
+  iter: items.iterator
+  when [not iter.empty?]:
+    out.push iter.item
+    iter.advance
+  iter.each [. item]:
+    out.push ' '
+    out.push item
+  out
+
+#location: #
+  [. .? a]: has? a #location
+  [. filename line col]: #
+    #location
+    .filename: filename
+    .line: line
+    .col: col
+  [. .unknown]: #location 'unknown' -1 -1
+  [self .to-string]:
+    combine-strings self.filename ':' self.line.to-string ':' self.col.to-string
+
+#token-node: #
+  [. .? a]: has? a #token-node
+  [. id]: #token-node id #location.unknown
+  [. id location]: #
+    #token-node
+    .id: id
+    .location: location
+  [self.to-string]: combine-strings '[token ' self.id ']'
+
+#number-node: #
+  [. .? a]: has? a #number-node
+  [. value]: #number-node value #location.unknown
+  [. value location]: #
+    #number-node
+    .value: value
+    .location: location
+  [self.to-string]: self.value.to-string
+
+#apply-node: #
+  [. .? a]: has? a #apply-node
+  [. items]: #apply-node items #location.unknown
+  [. items location]: #
+    #apply-node
+    .items: items
+    .location: location
+  [self.to-string]:
+    assert [self.items.length .> 0]
+    combine-strings
+      '['
+      space-separate [self.items.iterator.map [. item]: item.to-string].to-array
+      ']'
+
+#list-node: #
+  [. .? a]: has? a #list-node
+  [. items]: #list-node items #location.unknown
+  [. items location]: #
+    #list-node
+    .items: items
+    .location: location
+  [self.to-string]: combine-strings
+    '[!'
+    [self.items.iterator.map [. i]: [combine-strings ' ' i.to-string]].to-array
+    ']'
+  
+#word-node: #
+  [. .? a]: has? a #word-node
+  [. id]: #word-node id #location.unknown
+  [. id location]: #
+    #word-node
+    .id: id
+    .location: location
+  [self.to-string]: self.id
+
+#vararg-node: #
+  [. .? a]: has? a #vararg-node
+  [. id]: #vararg-node id #location.unknown
+  [. id location]: #
+    #vararg-node
+    .id: id
+    .location: location
+  [self.to-string]: self.id
+
+#string-node: #
+  [. .? a]: has? a #string-node
+  [. value]: #string-node value #location.unknown
+  [. value location]: #
+    #string-node
+    .value: value
+    .location: location
+  [self.to-string]: combine-strings '\'' self.value '\''
+  
+#binding-node: #
+  [. .? a]: has? a #binding-node
+  [. id value]: #binding-node id value #location.unknown
+  [. id value location]: #
+    #binding-node
+    .id: id
+    .value: value
+    .location: location
+  [self.to-string]: combine-strings self.id ': ' self.value.to-string
+
+#field-node: #
+  [. .? a]: has? a #field-node
+  [. id value]: #field-node id value #location.unknown
+  [. id value location]: #
+    #field-node
+    .id: id
+    .value: value
+    .location: location
+  [self.to-string]: combine-strings self.id ': ' self.value.to-string
+
+
+#function-node: #
+  [. .? a]: has? a #function-node
+  [. params body]: #function-node params body #location.unknown
+  [. params body location]: #
+    #function-node
+    .params: params
+    .body: body
+    .location: location
+  [self.to-string]: combine-strings
+    '[.'
+    self.params.map [. p]: [combine-strings ' ' p]
+    ']: '
+    self.body.to-string
+
+#symbol-function-node: #
+  [. .? a]: has? a #symbol-function-node
+  [. params body]: #symbol-function-node params body #location.unknown
+  [. symbol params body location]: #
+    #symbol-function-node
+    .symbol: symbol
+    .params: params
+    .body: body
+    .location: location
+  [self.to-string]: combine-strings
+    #list '[. ' self.symbol
+    self.params.map [. p]: [combine-strings ' ' p]
+    #list ']: ' self.body.to-string
+
+#symbol-method-node: #
+  [. .? a]: has? a #symbol-method-node
+  [. params body]: #symbol-method-node params body #location.unknown
+  [. symbol params body location]: #
+    #symbol-method-node
+    .symbol: symbol
+    .params: params
+    .body: body
+    .location: location
+  [self.to-string]:
+    iter: self.params.iterator
+    first: iter.item
+    iter.advance
+    combine-strings
+      #list '[' first self.symbol
+      [iter.map [. p]: [combine-strings ' ' p]].to-array
+      #list ']: ' self.body.to-string
+
+#symbol-node: #
+  [. .? a]: has? a #symbol-node
+  [. id]: #symbol-node id #location.unknown
+  [. id location]: #
+    #symbol-node
+    .id: id
+    .location: location
+  [self.to-string]: self.id
+
+#table-node: #
+  [. .? a]: has? a #table-node
+  [. items]: #table-node items #location.unknown
+  [. items location]: #
+    #table-node
+    .items: items
+    .location: location
+  [self.to-string]:
+    combine-strings
+      '[#'
+      [self.items.iterator.map [. i]: [combine-strings ' ' i.to-string]].to-array
+      ']'
+
+#primitive-node: #
+  [. .? a]: has? a #primitive-node
+  [. fn]: #primitive-node fn #location.unknown
+  [. fn location]: #
+    #primitive-node
+    .fn: fn
+    .location: location
+  [self.to-string]: '<prim>'
+
+#pair-node: #
+  [. .? a]: has? a #pair-node
+  [. key value]: #pair-node key value #location.unknown
+  [. key value location]: #
+    #pair-node
+    .key: key
+    .value: value
+    .location: location
+  [self.to-string]:
+    combine-strings self.key.to-string ': ' self.value.to-string
+
+#
+  .#location: #location
+  .#token-node: #token-node
+  .#number-node: #number-node
+  .#apply-node: #apply-node
+  .#list-node: #list-node
+  .#word-node: #word-node
+  .#vararg-node: #vararg-node
+  .#string-node: #string-node
+  .#binding-node: #binding-node
+  .#field-node: #field-node
+  .#function-node: #function-node
+  .#symbol-function-node: #symbol-function-node
+  .#symbol-method-node: #symbol-method-node
+  .#symbol-node: #symbol-node
+  .#table-node: #table-node
+  .#primitive-node: #primitive-node
+  .#pair-node: #pair-node

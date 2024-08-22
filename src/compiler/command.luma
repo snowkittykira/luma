@@ -1,0 +1,20 @@
+import 'prelude'
+import 'compiler/errors'
+import 'compiler/ast'
+import 'compiler/read'
+import 'compiler/context'
+import 'compiler/parse'
+import 'compiler/resolve'
+import 'compiler/link'
+import 'compiler/compile'
+
+assert [= 2 command-line-args.length] 'usage: compile <infile> <outfile>'
+
+in-file: command-line-args.first
+out-file: command-line-args.rest.first
+
+src: read-file in-file
+
+compiled: compile [link [resolve [parse [read src in-file]]]]
+
+write-file out-file compiled

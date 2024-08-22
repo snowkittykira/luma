@@ -1,0 +1,65 @@
+[is-word? node word]:
+  and [#word-node.? node] [= node.id word]
+
+[is-anon-key? node]:
+  and
+    and
+      #apply-node.? node
+      [node.items.length .> 0]
+    and
+      #symbol-node.? [node.items.get 0]
+      [= [node.items.get 0].id '.']
+
+[resolve root-node]:
+
+  [resolve-table node]:
+    items: [node.items.drop 1].map resolve-node
+    (TODO: convert pairs to other nodes)
+    #table-node items node.location
+
+  [resolve-list node]:
+    items: [node.items.drop 1].map resolve-node
+    (TODO: convert pairs to other nodes)
+    #list-node items node.location
+    
+  [resolve-pair node]:
+    items: [node.items.drop 1].map resolve-node
+    assert [= 2 items.length] 'pair needs two items at ' node.location.to-string
+    #pair-node [items.get 0] [items.get 1] node.location
+
+  [resolve-apply node]:
+    assert [node.items.length .> 0] [combine-strings 'empty apply node at ' node.location.to-string]
+    first: node.items.get 0
+    when
+      [is-word? first '#']: [resolve-table node]
+      [is-word? first '!']: [resolve-list node]
+      [is-word? first ':']: [resolve-pair node]
+      else:
+        items: node.items.map resolve-node
+        #apply-node items node.location
+
+  [resolve-word node]:
+    when
+      [and [<= 1 node.id.length] [= '.' [node.id.substring 0 1]]]:
+        #symbol-node node.id node.location
+      [and [<= 1 node.id.length] [= '\'' [node.id.substring 0 1]]]:
+        #string-node [node.id.substring 1 [- node.id.length 1]] node.location
+      [node.id.to-number]:
+        #number-node node.id.to-number node.location
+      [node.id.contains? '..']:
+        #vararg-node node.id node.location
+      [or [node.id.contains? '.'] [or [node.id.contains? '['] [node.id.contains? ']']]]:
+        assert false [combine-strings 'invalid character in word: ' node.id ' at ' node.location.to-string]
+      else:
+        node
+
+  [resolve-node node]:
+    when
+      [#apply-node.? node]: [resolve-apply node]
+      [#word-node.? node]:  [resolve-word node]
+      else:                 assert false [combine-strings 'resolve: unknown node at ' node.location.to-string]
+
+  [resolve-node root-node]
+
+#
+  .resolve: resolve

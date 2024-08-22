@@ -1,0 +1,273 @@
+(comments are in parentheses, can nest, and can
+ span multiple lines)
+
+(the following are special characters: []().:')
+(for now everything else can be used in words)
+
+(numbers, strings, words)
+1
+'string'
+a
+foo
+a-word-with-dashes
+
+(keywords: # !)
+(special forms: import if when while set and or)
+
+(application is like lisp)
+[+ 1 2] (returns 3)
+
+(brackets can be omitted at the start of a line)
++ 1 2 (the same)
+
+(arguments can be indented, one per line)
++ 
+  1
+  2 (also returns 3)
+
+(exception: with one expression alone, and no
+ indented body, then brackets are needed if you
+ want to call it)
+[fn]
+
+(this returns the fn without applying it)
+fn
+
+(the general rule is: if a line has multiple
+ top-level items (including indented parts) it's
+ wrapped in [], otherwise it isn't)
+
+(brackets are used to group function calls)
++ 1 [* 2 3] (evaluates to 7)
+
++ 1
+  * 2 3 (the same)
+
+
+(a pair is a key expression followed by a colon
+ and a value expression)
+plus: +
+(in a body, pairs define variables)
+one: 1
+two: 2
+plus one two (evaluates to 3)
+
+(in special forms, pairs can have other
+ meanings: see when and while later)
+
+(set variables with `set`)
+a: 1
+print a (prints 1)
+set a 2
+print a (prints 2)
+
+(functions can be defined using brackets []
+ around the key in a pair. think of it like
+ a pattern match)
+
+(for example, this defines a function `fn` that
+ takes a and b as arguments and adds them)
+[fn a b]: + a b
+
+[fn 1 2] (returns 3)
+
+(putting a . as the function name makes an
+ anonymous function instead)
+[. a b]: + a b
+
+(if a colon is followed by a newline, then the
+ indented region is treated like a body, and the
+ expressions are evaluated one by one)
+three:
+  one: 1
+  two: 2
+  + one two (the last item is returned)
+
+(putting a dot in front of a word makes it a symbol)
+.abc
+
+(methods / fields are used by putting
+ a symbol after an expression)
+'asdf'.length
+(this is sort of like calling 'asdf' with
+ the symbol .length as an argument, except
+ that symbols aren't passed as regular arguments)
+
+(symbols associate with the item on their left,
+ so brackets may be omited more often)
+print 'asdf'.length (prints 4)
+
+(symbol applications at the start of a line can
+ take arguments)
+'asdf'.substring 1 3 (returns 'sd')
+(this calls 'asdf' with arguments
+ .substring, 1, and 3)
+
+(when not starting a line, brackets are
+ used to call a method with arguments)
+print 'asdf'.substring 1 3 (doesn't work,
+tries to print ['asdf'.substring], 1,
+and 3 as three separate values)
+print ['asdf'.substring 1 3] (prints 'sd')
+
+(arithmetic is implemented as method calls,
+ so these two are the same)
++ 1 2
+1 .+ 2
+
+(the + function is implemented like this)
+[+ a b]: a .+ b
+
+(if always has two branches, each a single
+ expression, and returns one of them,
+ like a ternary expression)
+if [a .< 0]
+  'true expression'
+  'false expression'
+
+(and returns the first value if it's false,
+ otherwise evaluates and returns the second value)
+(or returns the first value if it's not false,
+ otherwise evaluates and returns the second value)
+
+and 1 2 (returns 2)
+or 1 2 (returns 1)
+and something-that-must-be-falsy [error 'it wasnt falsy!']
+or something-that-must-be-truthy [error 'it wasnt truthy!']
+
+(when uses condition: result pairs instead)
+when
+  [a .< 1]:
+    'first then block goes here'
+  [a .< 2]:
+    'another then block'
+    (only the first matching one is executed)
+  else:
+    'else catches other cases (optional)'
+    'like other bodies, can include multiple'
+    'indented expressions'
+
+(unlike `if`, `when` lets you:
+ - have more than one condition,
+ - omit the else case,
+ - have bodies with multiple expressions)
+
+(when you only have one condition / body, putting
+ the condition on the same line is more compact)
+when [a .< 1]:
+  'first expression'
+  'more expressions can go here,'
+  'they are all executed'
+
+(note that when pairs aren't the first thing on a
+ line, they only accept one value on the right of
+ the colon)
+when [a .< 1]: f 1 2   (not valid)
+when [a .< 1]: [f 1 2] (put brackets)
+when [a .< 1]:
+  f 1 2 (indenting the body also works)
+
+(while takes a condition/result pair, repeats the
+ result while the condition is true)
+a: 0
+while [a .< 100]:
+  print a
+  set a [a .+ 1] (prints numbers from 0-99)
+
+(`#` creates a table, or object)
+obj: [#] (empty object)
+
+(i'm thinking of renaming this to `table`, or
+ splitting it into `object` and `type`, which are
+ the two things it's used for)
+
+(tables can have fields)
+tbl: #
+  .field-a: 1
+  .field-b: 2
+
+tbl.field-a (gets field-a)
+set tbl.field-a 3 (sets field-a)
+
+(including anonymous functions in tables lets you
+ call the table with the corresponding number of
+ arguments, this is how you overload a function
+ depending on number of arguments)
+tbl2: #
+  [.]: tbl2 1 2
+  [. a b]: + a b
+
+[tbl2] (returns 3)
+tbl2 2 3 (returns 5)
+
+(including a symbol as the first argument lets you
+ call the table with that symbol)
+tbl3: #
+  [. .something]: 1
+  (symbol-functions can have arguments)
+  [. .something-else a b]: + a b
+
+tbl3.something (returns 1)
+tbl3.something-else 1 2 (returns 3)
+
+(tables can also be used as types, providing
+ methods to other tables)
+some-type: # 
+  (methods are defined by putting a name
+   before the symbol (usually but not
+   always `self`))
+  [self.foo a]: + a self.field
+
+(methods are not called on the table itself, but
+ w hen the table is used as the type for another
+ table)
+
+(pass the type object `some-type` when making a
+ table to allow the methods to be used on it)
+tbl4: # some-type
+  .field: 1
+
+tbl4.foo 2 (returns 3)
+
+(this is used to implement classes)
+(by convention, classes are named with words that
+ start with `#`)
+
+(here's a two dimensional vector class)
+#vec2: #
+  (invoking [#vec2 x y] calls this constructor,
+   which makes a new table that inherits #vec2's
+   methods)
+  [. x y]: # #vec2
+    .x: x
+    .y: y
+
+  (this plus method will be available on instances
+   of #vec2 (but not directly on the #vec2 class))
+  [a .+ b]:
+    #vec2 [a.x .+ b.x]
+          [a.y .+ b.y]
+
+[vec2 1 2] .+ [vec2 3 4] (returns [vec2 4 6])
++ [vec2 1 2] [vec2 3 4] (the same)
+
+(note that only methods are inherited in this way,
+ not other functions or fields)
+
+(todo: import, module exports, and, or)
+
+(import brings stuff from another file into scope)
+import 'prelude' (most files start with this)
+
+(a file that's imported in this way should end in
+ a table literal with fields for each thing to be
+ imported:)
+
+#
+  .name: name
+  (or)
+  .exported-name: internal-name
+
+(imported fields are used without the leading .)
+(currently all imported names are visible globally,
+ probably this will change to file scope later)

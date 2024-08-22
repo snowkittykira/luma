@@ -1,0 +1,172 @@
+'<root>                  ::= <body>'
+'<body>                  ::= <indent> (<line-token> <line>)* <unindent>'
+'<line>                  ::= <first-expr> <rest>'
+'<rest>                  ::= <rest-expr>* [<body>]'
+'<first-expr>            ::= <expr> <symbol>+ [<colon> <first-pair-value>] <rest>'
+'<first-pair-value>      ::= <body> | <line>'
+'<rest-expr>             ::= <expr> <symbol>* [<colon> <rest-pair-value>]'
+'<rest-pair-value>       ::= <body> | <rest-expr>'
+'<expr>                  ::= <open-paren> <expr> <symbol>* <rest> <close-paren>'
+'                          | <word>'
+
+'<indent>                ::= "[indent]"'
+'<unindent>              ::= "[unindent]"'
+'<line-token>            ::= "[line]"'
+'<open-paren>            ::= "["'
+'<close-paren>           ::= "]"'
+'<colon>                 ::= ":"'
+'<symbol>                ::= <any token starting with dot (.)>'
+'<word>                  ::= <any other token>'
+
+[make-list items location]:
+  apply-items: [#array [#word-node '!']]
+  apply-items.push-items items
+  #apply-node apply-items location
+
+[make-pair a b location]:
+  #apply-node [#array [#word-node ':'] a b] location
+
+[is-word-symbol? word]:
+  and [#word-node.? word] [= '.' [word.id.substring 0 1]]
+
+[parse token-array]:
+  token-index: 0
+
+  [current]:
+    if [token-index .< token-array.length]
+      token-array.get token-index
+      false
+
+  [current-location]:
+    t: [current]
+    if t
+      t.location
+      #location.unknown
+
+  [is-token? t]:
+    and [current] [= [current].id t]
+
+  [is-symbol?]:
+    and [#token-node.? [current]] [= '.' [[current].id.substring 0 1]]
+
+  [check-is t]:
+    when [not [is-token? t]]:
+      assert false
+        combine-strings 'expected \'' t '\', got \'' [#string [&value-to-string [current].id]] '\' at ' [current-location].to-string
+
+  next: #
+    [. t]:
+      check-is t
+      [next]
+    [.]:
+      assert [current] 'tried to advance past end'
+      set token-index [1 .+ token-index]
+
+  [starts-expr]:
+    when
+      [is-token? '[unindent]']: false
+      [is-token? '[line]']:     false
+      [is-token? '[indent]']:   false
+      [is-token? ':']:          false
+      [is-token? ']']:          false
+      [is-token? false]:        false
+      else:                     true
+
+  rules: #
+    [. .root]:
+      make-list rules.body [current-location]
+
+    [. .body]:
+      items: [#array]
+      next '[indent]'
+      while [and [not [is-token? '[unindent]']] [not [is-token? false]]]:
+        next '[line]'
+        items.push rules.line
+      next '[unindent]'
+      items.iterator.to-list
+
+    [. .line]:
+      items: [#array rules.first-expr]
+      items.push-items rules.rest
+      if [= 1 items.length]
+        items.get 0
+        #apply-node items [items.get 0].location
+
+    [. .rest]:
+      items: [#array]
+      while [starts-expr]:
+        items.push rules.rest-expr
+      when [is-token? '[indent]']:
+        rules.body.iterator.each [. b]: [items.push b]
+      items.iterator.to-list
+
+    [. .pair-value expr location same-line-rule]:
+      when
+        [is-token? '[indent]']:
+          body: rules.body
+          if [= 1 body.length]
+            make-pair expr body.first location
+            make-pair expr [make-list body location] location
+        else:
+          make-pair expr [same-line-rule] location
+
+
+    [. .first-expr]:
+      expr: rules.expr
+      when
+        [and [not [is-word-symbol? expr]] [is-symbol?]]:
+          while [is-symbol?]:
+            set expr [#apply-node [#array expr rules.word] [current-location]]
+          set expr.items [#array.append expr.items rules.rest]
+      when
+        [is-token? ':']:
+          location: [current-location]
+          [next]
+          set expr [rules.pair-value expr location [.]: [rules.line]]
+      expr
+
+    [. .rest-expr]:
+      expr: rules.expr
+      when
+        [and [not [is-word-symbol? expr]] [is-symbol?]]:
+          while [is-symbol?]:
+            set expr [#apply-node [#array expr rules.word] [current-location]]
+      when
+        [is-token? ':']:
+          location: [current-location]
+          [next]
+          set expr [rules.pair-value expr location [.]: [rules.rest-expr]]
+      expr
+
+    [. .expr]:
+      when
+        [is-token? '[']:
+          [next]
+          do-wrap?: true
+          expr: rules.expr
+          when [and [not [is-word-symbol? expr]] [is-symbol?]]:
+            while [is-symbol?]:
+              set expr [#apply-node [#array expr rules.word] [current-location]]
+              set do-wrap? false
+            set expr.items [#array.append expr.items rules.rest]
+          rest: rules.rest
+          next ']'
+          if [or do-wrap? [rest.length .> 0]]
+            #apply-node [#array.append [#array expr] rest] expr.location
+            expr
+
+        else:
+          rules.word
+
+    [. .word]:
+      'actually word or symbol'
+      token: [current]
+      location: [current-location]
+      [next]
+      #word-node token.id location
+
+
+  rules.root
+
+#
+  .parse: parse

@@ -1,0 +1,838 @@
+emit-debug-info: true
+
+[key-<= a b]:
+  a-type-value: if [#number.? a] 0 1
+  b-type-value: if [#number.? b] 0 1
+  when
+    [a-type-value .< b-type-value]: true
+    [a-type-value .= b-type-value]: a .<= b
+    else:                           false
+      
+#type: #
+  [. .? a]: has? a #type
+  [.]: # #type
+    .call:      false (plain non-table function literal   false or return type)
+    .fields:    [#hash] (table fields     string -> true) (TODO: detect when they're always one type)
+    .functions: [#hash] (table functions  string -> return type)
+    .methods:   [#hash] (table methods    string -> return type)
+    .index:     false   (table index      false or type)
+
+  [self.to-string]:
+    out: [#array '[type']
+
+    [add-from-hash name hash]:
+      keys: hash.key-iterator.to-array
+      keys.sort key-<=
+      when [keys.length .> 0]:
+        out.push ' ['
+        out.push name
+        keys.each [. k]:
+          out.push ' '
+          out.push k.to-string
+          type: [hash.get k]
+          when [#type.? type]:
+            out.push ': '
+            out.push type.to-string
+        out.push ']'
+
+    [add-from-hash 'fields' self.fields]
+    [add-from-hash 'functions' self.functions]
+    [add-from-hash 'methods' self.methods]
+    when self.call:
+      out.push ' [call '
+      out.push self.call.to-string
+      out.push ']'
+    when self.index:
+      out.push ' [index '
+      out.push self.index.to-string
+      out.push ']'
+    out.push ']'
+    out.concat
+
+
+#value: #
+  [. .? a]: has? a #value
+  [. name]: # #value
+    .id: name
+    .type: [#type]
+
+[seq items..]:
+  (merges arrays and/or items into one array)
+  inputs: [#array items..]
+  result: [#array]
+  inputs.each [. item]:
+    if [#array.? item]
+      result.push-items item
+      result.push item
+  result
+
+[comma-separate items]:
+  out: [#array]
+  iter: items.iterator
+  when [not iter.empty?]:
+    out.push iter.item
+    iter.advance
+  iter.each [. item]:
+    out.push ', '
+    out.push item
+  out
+
+[words->ids words]:
+  words.map [. w]: [w.id]
+
+[is-function-vararg? f]:
+  last-arg: and [f.params.length .> 0] f.params.last
+  and last-arg [last-arg.contains? '..']
+
+[process-symbol-function-or-method exp]:
+  signature: exp.key
+  first: signature.items.get 0
+  symbol: signature.items.get 1
+  args: signature.items.drop 2
+  when
+    [#symbol-node.? first]:
+      assert-at [= '.' first.id] first 'invalid symbol in first position of function signature'
+      #symbol-function-node symbol.id [words->ids args] exp.value exp.location
+    else:
+      assert-at [#word-node.? first] first 'expected word node'
+      #symbol-method-node symbol.id [words->ids [#array.append [#array first] args]] exp.value exp.location
+
+[process-plain-function exp]:
+  signature: exp.key
+  first: signature.items.get 0
+  rest: signature.items.drop 1
+  when
+    [#word-node.? first]:
+      #binding-node first.id
+        #function-node [words->ids rest] exp.value exp.location
+    else:
+      assert-at [and [#symbol-node.? first] [= '.' first.id]] first 'function expects . or word in first position'
+      #function-node [words->ids rest] exp.value exp.location
+
+[process-pair exp is-table]:
+  when
+    [#apply-node.? exp.key]:
+      signature: exp.key
+      'could be a function, a named function, a symbol function, or a symbol method'
+      when
+        [and [2 .<= signature.items.length] [#symbol-node.? [signature.items.get 1]]]:
+          process-symbol-function-or-method exp
+        else:
+          process-plain-function exp
+    [#symbol-node.? exp.key]:
+      #field-node exp.key.id exp.value exp.location
+    else:
+      assert-at [#word-node.? exp.key] exp.key 'unknown key in pair'
+      #binding-node exp.key.id exp.value exp.location
+
+[process-pairs list is-table]:
+  list.map [. exp]:
+    if [#pair-node.? exp]
+      process-pair exp is-table
+      exp
+
+[compile exp]:
+  buffer: [#array]
+  location-to-emit: false
+  gensym-counts: [#hash]
+  
+  [gensym name]:
+    safe-name: [safe-identifier name]
+    count: gensym-counts.get-or safe-name 0
+    id: combine-strings safe-name '__' count.to-string
+    gensym-counts.set safe-name [count .+ 1]
+    #value id
+
+
+  [set-location-info location]: 
+    when emit-debug-info:
+      set location-to-emit location
+
+  emit: #
+    [.]: true
+    [. item items..]:
+      when location-to-emit:
+        buffer.push [combine-strings '--@ ' location-to-emit.to-string '\n']
+        set location-to-emit false
+      when 
+        [#string.? item]:
+          buffer.push item
+        [#value.? item]:
+          emit item.id
+        else:
+          item.iterator.each [. i]: [emit i]
+        (else:
+          assert false [combine-strings 'tried to emit non-list non-string non-value: ' [&value-to-string item]])
+      emit items..
+
+  [compile-number exp context]:
+    #value exp.value.to-string
+
+  [compile-string exp context]:
+    #value [quote-string exp.value]
+
+  [compile-word exp context]:
+    context.lookup exp.id exp.location
+
+  [compile-args args context]:
+    args.map [. arg]:
+      compile-exp arg context
+
+  [prepare-args list context]:
+    when
+      [list.length .= 0]:
+        #
+          .n: '0'
+          .static-n: 0
+          .args: list
+      else:
+        last-arg: list.last
+        when
+          [#vararg-node.? last-arg]:
+            vararg: [context.lookup last-arg.id last-arg.location]
+            list-without-vararg: list.drop-last 1
+            n: combine-strings list-without-vararg.length.to-string ' + ' vararg.id '.n'
+            arg-strings: #array.append [compile-args [list.drop-last 1] context]
+                                       [#array [combine-strings 'unpack (' vararg.id ', 1, ' vararg.id '.n)']]
+            #
+              .n: n
+              .static-n: false
+              .args: arg-strings
+          else:
+            #
+              .n: list.length.to-string
+              .static-n: list.length
+              .args: compile-args list context
+
+  [find-method type symbol-str]:
+    (this figures out from the type where to get the method)
+    index-type: type.index
+    when
+      [and index-type [index-type.methods.has? symbol-str]]:
+        #
+          .path: seq '.index.methods [' [quote-string symbol-str] ']'
+          .type: [index-type.methods.get symbol-str]
+      index-type:
+        found: find-method index-type symbol-str
+        and found
+          #
+            .path: seq '.index' found.path
+            .type: found.type
+      else:
+        false
+
+  [compile-apply exp context]:
+    fn: exp.items.get 0
+    args: exp.items.drop 1
+      
+    'dispatch on fn'
+    fn-val: compile-exp fn context
+
+    when
+      [#primitive-node.? fn-val]:
+        [fn-val.fn] exp context
+
+      [and [args.length .> 0] [#symbol-node.? [args.get 0]]]:
+        symbol-id: [args.get 0].id
+        quoted-symbol: quote-string symbol-id
+        'compile method arguments'
+        compiled-args: prepare-args [args.drop 1] context
+
+        result-id: gensym 'apply_result'
+        emit 'local ' result-id ' = '
+        when
+          [fn-val.type.fields.has? symbol-id]:
+            when 
+              [is? 0 compiled-args.static-n]:
+                emit fn-val '[' quoted-symbol ']\n'
+              else:
+                (todo: should recurse and set type here)
+                emit 'invoke_symbol ('
+                field: combine-strings fn-val.id '[' quoted-symbol ']'
+                emit [comma-separate [seq field compiled-args.n compiled-args.args]]
+                emit ')\n'
+                (emit '-- ' fn-val ' :: ' fn-val.type.to-string '\n')
+          [fn-val.type.functions.has? symbol-id]:
+            emit fn-val '.functions[' quoted-symbol '] (' [comma-separate compiled-args.args] ')\n'
+            set result-id.type [fn-val.type.functions.get symbol-id]
+          else:
+            found-method: find-method fn-val.type symbol-id
+            when
+              found-method:
+                emit fn-val found-method.path '(' [comma-separate compiled-args.args] ')\n'
+                set result-id.type found-method.type
+              else:
+                emit 'invoke_symbol ('
+                emit [comma-separate [seq fn-val quoted-symbol compiled-args.n compiled-args.args]]
+                emit ')\n'
+                (emit '-- ' fn-val ' :: ' fn-val.type.to-string '\n')
+        result-id
+
+      else:
+        'compile function arguments'
+        compiled-args: prepare-args args context
+
+        result-id: gensym 'apply_result'
+        emit 'local ' result-id ' = '
+        when
+          fn-val.type.call:
+            emit fn-val ' (' [comma-separate compiled-args.args] ')\n'
+            set result-id.type fn-val.type.call
+          [fn-val.type.functions.has? compiled-args.static-n]:
+            emit fn-val '.functions[' compiled-args.n '] (' [comma-separate compiled-args.args] ')\n'
+            set result-id.type [fn-val.type.functions.get compiled-args.static-n]
+          [fn-val.type.functions.has? '..']:
+            emit fn-val '.functions[".."] (' [comma-separate compiled-args.args] ')\n'
+            set result-id.type [fn-val.type.functions.get '..']
+          else:
+            emit 'invoke ('
+            emit [comma-separate [seq fn-val compiled-args.n compiled-args.args]]
+            emit ')\n'
+            (emit '-- ' fn-val ' :: ' fn-val.type.to-string '\n')
+        result-id
+
+  [compile-list exp context]:
+    new-context: #context context
+    result-id: gensym 'list_result'
+
+    'convert pairs to bindings'
+    processed-items: process-pairs exp.items false
+
+    'wrap in function to reduce top-level locals'
+    emit 'local ' result-id '\n'
+    emit '(function ()\n'
+
+    'declare locals'
+    locals: [#list]
+    processed-items.each [. item]:
+      when [#binding-node.? item]:
+        id: [gensym item.id]
+        set locals [#list.append locals [#list id]]
+        new-context.add item.id id
+    when [not locals.empty?]:
+      emit 'local ' [comma-separate locals] '\n'
+
+    'run body'
+    when [processed-items.length .> 0]:
+      [processed-items.drop-last 1].each [. item]:
+        when
+          [#binding-node.? item]:
+            id: [new-context.lookup item.id item.location]
+            compiled-value: [compile-exp item.value new-context]
+            emit id ' = ' compiled-value '\n'
+            set id.type compiled-value.type
+            ' TODO: use a primitive to set this instead of patching list like this'
+            when
+              [= '#number' item.id]: [emit 'ops.number = ' id '\n']
+              [= '#string' item.id]: [emit 'ops.string = ' id '\n']
+              [= '#bool'   item.id]: [emit 'ops.boolean = '   id '\n']
+          else:
+            'ignore return value until the last item'
+            [compile-exp item new-context]
+      last-item: processed-items.last
+      assert-at [not [#binding-node.? last-item]] last-item 'lists cant end in a binding'
+      compiled-value: [compile-exp last-item new-context]
+      emit result-id ' = ' compiled-value '\n'
+      set result-id.type compiled-value.type
+
+    set-location-info #location.unknown
+    emit 'end)()\n'
+    result-id
+    
+  [compile-function exp context]:
+    fn-id: gensym 'fn'
+    new-context: [#context context]
+    params: [#array]
+    exp.params.each [. param]:
+      param-id: [gensym 'param']
+      params.push param-id
+      new-context.add param param-id
+    index: false
+    when
+      [is-function-vararg? exp]:
+        vararg: params.last
+        adjusted-params: params.drop-last 1
+        fixed-param-count: adjusted-params.length
+        emit 'local ' fn-id ' = function (...)\n'
+        when [< 0 fixed-param-count]:
+          emit 'local ' [comma-separate adjusted-params] ' = ...\n'
+        emit 'local ' vararg ' = { n = select ("#", ...) - ' fixed-param-count.to-string ', select (' [+ 1 fixed-param-count].to-string ', ...) }\n'
+        emit 'assert (' vararg '.n >= 0, "not enough arguments to function")\n'
+        set index '..'
+      else:
+        emit 'local ' fn-id ' = function (' [comma-separate params] ')\n'
+        set index params.length
+    return-value: [compile-exp exp.body new-context]
+    emit 'return ' return-value '\n'
+    emit 'end\n'
+    set fn-id.type.call return-value.type
+    fn-id
+
+  [compile-table exp context]:
+    new-context: #context context
+    'convert pairs to bindings'
+    processed-items: process-pairs exp.items true
+
+    'declare table'
+    table-id: gensym 'table'
+
+    emit 'local ' table-id '\n'
+    'wrap in function to reduce top-level locals'
+    emit '(function ()\n'
+    'declare locals'
+    locals: [#list]
+    processed-items.each [. item]:
+      when [#binding-node.? item]:
+        id: [gensym item.id]
+        set locals [#list.append locals [#list id]]
+        new-context.add item.id id
+    when [not locals.empty?]:
+      emit 'local ' [comma-separate locals] '\n'
+
+    'define contents'
+    fields: [#list]
+    functions: [#list]
+    methods: [#list]
+    has-index: false
+    processed-items.each [. item]:
+      when
+        [#binding-node.? item]:
+          id: [new-context.lookup item.id item.location]
+          compiled-value: [compile-exp item.value new-context]
+          emit id ' = ' compiled-value '\n'
+          set id.type compiled-value.type
+        [#field-node.? item]:
+          id: compile-exp item.value new-context
+          set fields [#list.append fields
+            [#list '[' [quote-string item.id] '] = ' id ',\n']]
+          table-id.type.fields.set item.id true
+        [#function-node.? item]:
+          fn-id: compile-function item new-context
+          num-params: item.params.length
+          when
+            [is-function-vararg? item]:
+              set functions [#list.append functions [#list '[".."] = ' fn-id ',\n']]
+              table-id.type.functions.set '..' fn-id.type.call
+            else:
+              set functions [#list.append functions [#list '[' num-params.to-string '] = ' fn-id ',\n']]
+              table-id.type.functions.set num-params fn-id.type.call
+        [#symbol-function-node.? item]:
+          fn-id: compile-function item new-context
+          set functions [#list.append functions
+            [#list '[' [quote-string item.symbol] '] = ' fn-id ',\n']]
+          table-id.type.functions.set item.symbol fn-id.type
+        [#symbol-method-node.? item]:
+          fn-id: compile-function item new-context
+          set methods [#list.append methods
+            [#list '[' [quote-string item.symbol] '] = ' fn-id ',\n']]
+          table-id.type.methods.set item.symbol fn-id.type
+        else:
+          assert-at [not has-index] item 'table cant have multiple index values'
+          set has-index true
+          index-id: compile-exp item new-context
+          set fields [#list.append fields
+            [#list '["index"] = ' index-id ',\n']]
+          set table-id.type.index index-id.type
+
+    'define table'
+    emit table-id ' = {\n'
+    emit fields
+    when [not functions.empty?]:
+      emit 'functions = {\n'
+      emit functions
+      emit '},\n'
+    when [not methods.empty?]:
+      emit 'methods = {\n'
+      emit methods
+      emit '},\n'
+    emit '}\n'
+    set-location-info #location.unknown
+    emit 'end)()\n'
+    table-id
+
+  [compile-pair exp context]:
+    assert-at [#apply-node.? exp.key] exp.key 'invalid pair as expression'
+    assert-at [exp.key.items.length .> 0] exp.key 'invalid pair as expression'
+    assert-at [is? '.' [exp.key.items.get 0].id] [exp.key.items.get 0] 'invalid pair as expression'
+    compile-exp [process-plain-function exp] context
+
+  [compile-exp exp context]:
+    set-location-info exp.location
+    result:
+      when
+        [#number-node.?   exp]:  compile-number   exp context
+        [#string-node.?   exp]:  compile-string   exp context
+        [#word-node.?     exp]:  compile-word     exp context
+        [#apply-node.?    exp]:  compile-apply    exp context
+        [#list-node.?     exp]:  compile-list     exp context
+        [#function-node.? exp]:  compile-function exp context
+        [#table-node.?    exp]:  compile-table    exp context
+        [#pair-node.?     exp]:  compile-pair     exp context
+        else: error-at exp [combine-strings 'unknown exp in compile-exp: ' exp.to-string]
+    when [not [or [#value.? result] [#primitive-node.? result]]]:
+      error-at exp 'compile-exp should return #value'
+    result
+
+  base-context:
+    context: [#context]
+  
+    [add-macro name n-args compile-macro]:
+      context.add name
+        #primitive-node
+          [. exp context]:
+            args: exp.items.drop 1
+            assert-at [or [not n-args] [= n-args args.length]] exp 'wrong number of arguments to primitive'
+            compile-macro exp context
+
+    [add-fn name n-args compile-fn]:
+      add-macro name n-args [. exp context]:
+        args: exp.items.drop 1
+        arg-values: args.map [. arg]:
+          compile-exp arg context
+        compile-fn arg-values
+        
+    [add-lua-fn name n-args lua-fn]:
+      add-fn name n-args [. items]:
+        result-id: gensym [combine-strings name '_result']
+        emit 'local ' result-id ' = ' lua-fn '(' [comma-separate items] ')\n'
+        result-id
+
+    add-fn 'import' 1 [. items]:
+      #value 'true'
+
+    add-macro 'provide' false [. exp context]:
+      #value 'true'
+
+    [add-type-check name lua-type]:
+      add-fn name 1 [. items]:
+        result-id: gensym [combine-strings name 'result']
+        emit 'local ' result-id ' = type (' [items.get 0] ') == "' lua-type '"\n'
+        result-id
+
+    add-type-check '&string?' 'string'
+    add-type-check '&number?' 'number'
+    add-type-check '&bool?'   'boolean'
+
+    (TODO: remove)
+    [add-type-constructor name lua-type]:
+      add-fn name 1 [. items]:
+        items.get 0
+
+    add-type-constructor '&#string' 'string'
+    add-type-constructor '&#number' 'number'
+    add-type-constructor '&#bool'   'boolean'
+
+    add-lua-fn '&value-to-string' 1 'tostring'
+    add-lua-fn '&string-to-number' 1 'tonumber'
+
+    add-fn '&string-concat' 2 [. items]:
+      result-id: gensym 'concat_result'
+      emit 'local ' result-id ' = ' [items.get 0] ' .. ' [items.get 1] '\n'
+      result-id
+
+    add-fn '&string-length' 1 [. items]:
+      result-id: gensym 'length_result'
+      emit 'local ' result-id ' = #' [items.get 0] '\n'
+      result-id
+
+    add-fn '&string-substring' 3 [. items]:
+      result-id: gensym 'substring_result'
+      emit 'local ' result-id ' = ' [items.get 0] ':sub (' [items.get 1] ' + 1, ' [items.get 2] ')\n'
+      result-id
+
+    add-fn '&utf8-char-at' 2 [. items]:
+      result-id: gensym 'char_at_result'
+      char-pattern: '"^[%z\\01-\\127\\194-\\244][\\128-\\191]*"' (utf-8 character pattern)
+      emit 'local ' result-id ' = ' [items.get 0] ':match (' char-pattern ', ' [items.get 1] ' + 1)\n'
+      emit 'assert (' result-id ', "couldnt find next utf8 character in string")\n'
+      result-id
+
+    add-fn '&string-contains?' 2 [. items]:
+      result-id: gensym 'contains_result'
+      emit 'local ' result-id ' = ' [items.get 0] ':find (' [items.get 1] ', 1, true) ~= nil\n'
+      result-id
+
+    add-fn '&quote-string' 1 [. items]:
+      result-id: gensym 'quote_result'
+      emit 'local ' result-id ' = string.format ("%q", ' [items.get 0] ')\n'
+      result-id
+
+    add-fn '&safe-identifier' 1 [. items]:
+      result-id: gensym 'safe_id_result'
+      emit 'local ' result-id ' = string.gsub (' [items.get 0] ', "[^a-zA-Z0-9_]", "_")\n'
+      emit 'if ' result-id ':match ("^[0-9]") then ' result-id ' = "_" .. ' result-id ' end\n'
+      result-id
+
+    add-fn '&read-file' 1 [. items]:
+      file-id: gensym 'file'
+      result-id: gensym 'read_result'
+      emit 'local ' file-id ' = assert (io.open (' [items.get 0] ', "r"))\n'
+      emit 'local ' result-id ' = ' file-id ':read ("*a")\n'
+      emit file-id ':close ()\n'
+      result-id
+
+    add-fn '&write-file' 2 [. items]:
+      file-id: gensym 'file'
+      result-id: gensym 'read_result'
+      emit 'local ' file-id ' = assert (io.open (' [items.get 0] ', "w"))\n'
+      emit file-id ':write (' [items.get 1] ')\n'
+      emit file-id ':close ()\n'
+      #value 'true'
+
+    [add-binop op lua-op]:
+      add-fn op 2 [. items]:
+        id: [gensym 'op_result']
+        emit 'local ' id ' = ' [items.get 0] ' ' lua-op ' ' [items.get 1] '\n'
+        id
+  
+    add-binop '&+' '+'
+    add-binop '&-' '-'
+    add-binop '&*' '*'
+    add-binop '&/' '/'
+    add-binop '&=' '=='
+    add-binop '&~=' '~='
+    add-binop '&<' '<'
+    add-binop '&>' '>'
+    add-binop '&<=' '<='
+    add-binop '&>=' '>='
+
+    context.add 'true' [#value 'true']
+    context.add 'false' [#value 'false']
+
+    context.add 'print' [#value 'print']
+
+    add-binop 'is?' '=='
+
+    add-macro 'set' 2 [. exp context]:
+      args: exp.items.drop 1
+      target: args.get 0
+      val-exp: args.get 1
+      value-id: compile-exp val-exp context
+      when
+        [#word-node.? target]:
+          'set local'
+          target-id: context.lookup target.id target.location
+          emit target-id ' = ' value-id '\n'
+          #value 'true'
+        [and [#apply-node.? target] [and [= 2 target.items.length] [#symbol-node.? [target.items.get 1]]]]:
+          'set field'
+          target-obj-id: compile-exp [target.items.get 0] context
+          sym-id: [target.items.get 1].id
+          emit target-obj-id ' ["' sym-id '"] = ' value-id '\n'
+          #value 'true'
+
+        else: error-at target [combine-strings 'unknown target in set: ' target.to-string]
+
+    add-macro 'if' 3 [. exp context]:
+      args: exp.items.drop 1
+      num-args: args.length
+      condition-id: compile-exp [args.get 0] context
+      result-id: gensym 'result'
+      emit 'local ' result-id '\n'
+      emit 'if ' condition-id ' then\n'
+      emit result-id ' = ' [compile-exp [args.get 1] context] '\n'
+      emit 'else\n'
+      emit result-id ' = ' [compile-exp [args.get 2] context] '\n'
+      emit 'end\n'
+      result-id
+
+    add-macro 'when' false [. exp context]:
+      args: exp.items.drop 1
+      result-id: gensym 'result'
+      emit 'local ' result-id '\n'
+      assert-at [args.length .> 0] exp 'empty when'
+      (TODO: use iterator instead of using drop)
+      [compile-branch iter]:
+        first: iter.item
+        iter.advance
+        assert-at [#pair-node.? first] first 'when expects pairs'
+        condition-id: compile-exp first.key context
+        emit 'if ' condition-id ' then\n'
+        emit result-id ' = ' [compile-exp first.value context] '\n'
+        emit 'else\n'
+        if [not iter.empty?]
+          compile-branch iter
+          emit result-id ' = false \n'
+        emit 'end\n'
+      [compile-branch args.iterator]
+      result-id
+        
+    context.add 'cond' [context.lookup 'when' #location.unknown]
+
+
+    add-macro 'while' 1 [. exp context]:
+      args: exp.items.drop 1
+      condition-id: gensym 'while_condition'
+      assert-at [args.length .> 0] exp 'empty while'
+      first: args.get 0
+      assert-at [#pair-node.? first] first 'while expects a pair'
+      emit 'local ' condition-id ' = ' [compile-exp first.key context] '\n'
+      emit 'while ' condition-id ' do\n'
+      emit 'local _ = ' [compile-exp first.value context] '\n'
+      emit condition-id ' = ' [compile-exp first.key context] '\n'
+      emit 'end\n'
+      #value 'false'
+
+    add-macro 'and' 2 [. exp context]:
+      args: exp.items.drop 1
+      condition-id: compile-exp [args.get 0] context
+      result-id: gensym 'result'
+      emit 'local ' result-id ' = ' condition-id '\n'
+      emit 'if ' result-id ' then\n'
+      second-condition-id: compile-exp [args.get 1] context
+      emit result-id ' = ' second-condition-id '\n'
+      emit 'end\n'
+      result-id
+
+    add-macro 'or' 2 [. exp context]:
+      args: exp.items.drop 1
+      condition-id: compile-exp [args.get 0] context
+      result-id: gensym 'result'
+      emit 'local ' result-id ' = ' condition-id '\n'
+      emit 'if not ' result-id ' then\n'
+      second-condition-id: compile-exp [args.get 1] context
+      emit result-id ' = ' second-condition-id '\n'
+      emit 'end\n'
+      result-id
+
+    add-macro 'has?' 2 [. exp context]:
+      'todo: lock down what this is supposed to do'
+      'its slightly different from what the interpreter does'
+      args: exp.items.drop 1
+      table: compile-exp [args.get 0] context
+      'todo: handle symbol as second arg'
+      item: compile-exp [args.get 1] context
+      result-id: gensym 'result'
+      emit 'local ' result-id ' = type (' table ') == "table" and (' table '.index == ' item ' or ' table '[' item '] ~= nil)\n'
+      result-id
+
+    add-lua-fn '&sqrt' 1 'math.sqrt'
+    add-lua-fn 'assert' false 'assert'
+    add-lua-fn '&get-time' false 'love.timer.getTime'
+
+    add-macro '&args' false [. exp context]:
+      args: exp.items.drop 1
+      result-id: gensym 'result'
+      emit 'local ' result-id ' = '
+      when
+        [args.length .= 0]:
+          emit '#arg\n'
+        else: 
+          index: compile-exp [args.get 0] context
+          emit 'arg [' index '] or false\n'
+      result-id
+
+    add-macro '&lua-get' 1 [. exp context]:
+      args: exp.items.drop 1
+      str: args.get 0
+      assert-at [#string-node.? str] str '&lua-get expects string literal'
+      #value str.value
+      
+    add-macro '&lua-set' 2 [. exp context]:
+      args: exp.items.drop 1
+      str: args.get 0
+      val: args.get 1
+      assert-at [#string-node.? str] str '&lua-set expects string literal'
+      emit str.value ' = ' [compile-exp val context] '\n'
+      #value 'false'
+
+    add-macro '&lua-has-index?' 2 [. exp context]:
+      args: exp.items.drop 1
+      table: [compile-exp [args.get 0] context]
+      index: [compile-exp [args.get 1] context]
+      result-id: gensym 'result'
+      emit 'local ' result-id ' = ' table ' [' index '] ~= nil\n'
+      result-id
+      
+    add-macro '&lua-get-index' 2 [. exp context]:
+      args: exp.items.drop 1
+      table: [compile-exp [args.get 0] context]
+      index: [compile-exp [args.get 1] context]
+      result-id: gensym 'result'
+      emit 'local ' result-id ' = ' table ' [' index ']\n'
+      emit 'assert (' result-id ' ~= nil, "getting invalid index")'
+      result-id
+      
+    add-macro '&lua-set-index' 3 [. exp context]:
+      args: exp.items.drop 1
+      table: [compile-exp [args.get 0] context]
+      index: [compile-exp [args.get 1] context]
+      value: [compile-exp [args.get 2] context]
+      emit table ' [' index '] = ' value '\n'
+      #value 'false'
+
+    add-macro '&lua-remove-index' 2 [. exp context]:
+      args: exp.items.drop 1
+      table: [compile-exp [args.get 0] context]
+      index: [compile-exp [args.get 1] context]
+      emit table ' [' index '] = nil\n'
+      #value 'false'
+
+    add-macro '&lua-has-next-index?' false [. exp context]:
+      args: exp.items.drop 1
+      table: [compile-exp [args.get 0] context]
+      result-id: gensym 'result'
+      index: if [args.length .= 1]
+        'nil'
+        [compile-exp [args.get 1] context]
+      emit 'local ' result-id ' = next (' table ', ' index ') ~= nil\n'
+      result-id
+
+    add-macro '&lua-next-index' false [. exp context]:
+      args: exp.items.drop 1
+      table: [compile-exp [args.get 0] context]
+      result-id: gensym 'result'
+      index: if [args.length .= 1]
+        'nil'
+        [compile-exp [args.get 1] context]
+      emit 'local ' result-id ' = next (' table ', ' index ')\n'
+      emit 'assert (' result-id ' ~= nil, "no next index")'
+      result-id
+      
+    add-macro '&lua-concat' 1 [. exp context]:
+      arg: exp.items.get 1
+      table: [compile-exp arg context]
+      result-id: gensym 'result'
+      emit 'local ' result-id '\n'
+      emit 'if ' table '[0] == nil then\n'
+      emit result-id ' = ""\n'
+      emit 'else\n'
+      emit result-id ' = ' table ' [0] .. table.concat (' table ')\n'
+      emit 'end\n'
+      result-id
+
+    add-macro '&embed-file' 1 [. exp context]:
+      arg: exp.items.get 1
+      assert-at [#string-node.? arg] arg '&embed expects string literal as path'
+      result-id: gensym 'embedded_string'
+      emit 'local ' result-id ' = ' [quote-string [read-file arg.value]] '\n'
+      result-id
+
+    add-macro 'new' false [. exp context]:
+      (currently not used)
+      assert-at [<= 2 exp.items.length] exp 'new takes at least one argument'
+      items: [#array]
+      fields: exp.items.drop 1
+      when [not [#pair-node.? [fields.get 0]]]:
+        items.push [fields.get 0]
+        set fields [fields.drop 1]
+
+      fields.each [. field]:
+        assert-at [#pair-node.? field] field 'new takes pairs after first argument'
+        assert-at [#word-node.? field.key] field.key 'new takes word-keyed pairs after first argument'
+        pair: [#pair-node [#symbol-node [combine-strings '.' field.key.id]] field.value]
+        items.push pair
+
+      compile-exp [#table-node items] context
+      
+    context
+
+  emit [&embed-file 'compiler/prefix.lua']
+  emit 'local function top_level ()\n'
+  emit 'return ' [compile-exp exp base-context] '\n'
+  emit 'end\n'
+  emit 'return run_with_error_handler (top_level)\n'
+  buffer.concat
+
+#
+  .compile: compile
