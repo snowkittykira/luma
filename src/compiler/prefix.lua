@@ -49,6 +49,14 @@ local function invoke_symbol (self, sym, num, ...)
   end
 end
 
+local function assign_values_to_array (array, ...)
+  local len = select ('#', ...)
+  for i = 1, len do
+    array [i-1] = select (i, ...)
+  end
+  array[".length"] = len
+end
+
 local function read_module_src (path)
   if rawget (_G, 'love') then
     return love.filesystem.read (path)
@@ -73,6 +81,9 @@ local function get_source_map (src)
     local line = src:match ('([^\n]*)\n?', current_index)
     if line:match ('^%-%-@ ') then
       last_location = line:match ('^%-%-@ (.*)')
+      if last_location == 'unknown' then
+        last_location = nil
+      end
     end
     source_map [current_line] = last_location
     current_line = current_line + 1

@@ -32,4 +32,6 @@ luma is still very experimental and might change a lot
 some things i'd like to add:
 
 - more tests in this repo
-- static typing (to reduce dynamic dispatch)
+- more examples
+- more and better error checking
+- clearer class/object differentiation

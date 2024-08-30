@@ -1,5 +1,5 @@
 [space-separate items]:
-  out: [#array]
+  out: [#list]
   iter: items.iterator
   when [not iter.empty?]:
     out.push iter.item
@@ -16,9 +16,19 @@
     .filename: filename
     .line: line
     .col: col
-  [. .unknown]: #location 'unknown' -1 -1
+  [. .unknown]: unknown-location
+  [a .~= b]:
+    or
+      a.filename .~= b.filename
+      or
+        a.line .~= b.line
+        a.col .~= b.col
   [self .to-string]:
-    combine-strings self.filename ':' self.line.to-string ':' self.col.to-string
+    if [self.line .< 0]
+      'unknown'
+      combine-strings self.filename ':' self.line.to-string ':' self.col.to-string
+
+unknown-location: #location 'unknown' -1 -1
 
 #token-node: #
   [. .? a]: has? a #token-node
@@ -49,7 +59,7 @@
     assert [self.items.length .> 0]
     combine-strings
       '['
-      space-separate [self.items.iterator.map [. item]: item.to-string].to-array
+      space-separate [self.items.iterator.map [. item]: item.to-string].to-list
       ']'
 
 #list-node: #
@@ -61,7 +71,7 @@
     .location: location
   [self.to-string]: combine-strings
     '[!'
-    [self.items.iterator.map [. i]: [combine-strings ' ' i.to-string]].to-array
+    [self.items.iterator.map [. i]: [combine-strings ' ' i.to-string]].to-list
     ']'
   
 #word-node: #
@@ -111,7 +121,6 @@
     .location: location
   [self.to-string]: combine-strings self.id ': ' self.value.to-string
 
-
 #function-node: #
   [. .? a]: has? a #function-node
   [. params body]: #function-node params body #location.unknown
@@ -155,7 +164,7 @@
     iter.advance
     combine-strings
       #list '[' first self.symbol
-      [iter.map [. p]: [combine-strings ' ' p]].to-array
+      [iter.map [. p]: [combine-strings ' ' p]].to-list
       #list ']: ' self.body.to-string
 
 #symbol-node: #
@@ -177,7 +186,7 @@
   [self.to-string]:
     combine-strings
       '[#'
-      [self.items.iterator.map [. i]: [combine-strings ' ' i.to-string]].to-array
+      [self.items.iterator.map [. i]: [combine-strings ' ' i.to-string]].to-list
       ']'
 
 #primitive-node: #
@@ -200,6 +209,14 @@
   [self.to-string]:
     combine-strings self.key.to-string ': ' self.value.to-string
 
+[key-<= a b]:
+  a-type-value: if [#number.? a] 0 1
+  b-type-value: if [#number.? b] 0 1
+  when
+    [a-type-value .< b-type-value]: true
+    [a-type-value .= b-type-value]: a .<= b
+    else:                           false
+      
 #
   .#location: #location
   .#token-node: #token-node

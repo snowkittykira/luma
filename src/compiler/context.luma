@@ -4,7 +4,7 @@
   [. parent]: #
     #context
     .parent: parent
-    .scope: [#hash]
+    .scope: [#table]
 
   [self.add key value]:
     assert [#string.? key] 'expected string as key'

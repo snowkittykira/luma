@@ -6,12 +6,14 @@ import 'compiler/context'
 import 'compiler/parse'
 import 'compiler/resolve'
 import 'compiler/link'
+import 'compiler/value'
+import 'compiler/lua-emitter'
 import 'compiler/compile'
 
 assert [= 2 command-line-args.length] 'usage: compile <infile> <outfile>'
 
-in-file: command-line-args.first
-out-file: command-line-args.rest.first
+in-file: command-line-args.get 0
+out-file: command-line-args.get 1
 
 src: read-file in-file
 

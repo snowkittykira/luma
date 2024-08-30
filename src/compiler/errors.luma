@@ -1,8 +1,9 @@
-[error-at node message]:
-  assert false [combine-strings message ' at ' node.location.to-string]
+[error-at node-or-location message]:
+  location: if [#location.? node-or-location] node-or-location node-or-location.location
+  assert false [combine-strings message ' at ' location.to-string]
 
-[assert-at condition node message]:
-  when [not condition]: [error-at node message]
+[assert-at condition node-or-location message]:
+  when [not condition]: [error-at node-or-location message]
 
 #
   .error-at: error-at

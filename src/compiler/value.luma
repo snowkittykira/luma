@@ -1,0 +1,20 @@
+#value: #
+  [. .? a]: has? a #value
+
+  [. name]: # #value
+    .id: name
+    .emitted: false
+    .simple: false
+
+  [. .simple name]: # #value
+    .id: name
+    .emitted: false
+    .simple: true
+
+  [self.emit]:
+    when [and [not self.simple] self.emitted]:
+      assert false [combine-strings 'value emitted multiple times: ' self.id]
+    set self.emitted true
+
+#
+  .#value: #value

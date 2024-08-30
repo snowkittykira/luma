@@ -19,22 +19,22 @@
 '<word>                  ::= <any other token>'
 
 [make-list items location]:
-  apply-items: [#array [#word-node '!']]
+  apply-items: [#list [#word-node '!']]
   apply-items.push-items items
   #apply-node apply-items location
 
 [make-pair a b location]:
-  #apply-node [#array [#word-node ':'] a b] location
+  #apply-node [#list [#word-node ':'] a b] location
 
 [is-word-symbol? word]:
   and [#word-node.? word] [= '.' [word.id.substring 0 1]]
 
-[parse token-array]:
+[parse token-list]:
   token-index: 0
 
   [current]:
-    if [token-index .< token-array.length]
-      token-array.get token-index
+    if [token-index .< token-list.length]
+      token-list.get token-index
       false
 
   [current-location]:
@@ -77,35 +77,35 @@
       make-list rules.body [current-location]
 
     [. .body]:
-      items: [#array]
+      items: [#list]
       next '[indent]'
       while [and [not [is-token? '[unindent]']] [not [is-token? false]]]:
         next '[line]'
         items.push rules.line
       next '[unindent]'
-      items.iterator.to-list
+      items
 
     [. .line]:
-      items: [#array rules.first-expr]
+      items: [#list rules.first-expr]
       items.push-items rules.rest
       if [= 1 items.length]
         items.get 0
         #apply-node items [items.get 0].location
 
     [. .rest]:
-      items: [#array]
+      items: [#list]
       while [starts-expr]:
         items.push rules.rest-expr
       when [is-token? '[indent]']:
         rules.body.iterator.each [. b]: [items.push b]
-      items.iterator.to-list
+      items
 
     [. .pair-value expr location same-line-rule]:
       when
         [is-token? '[indent]']:
           body: rules.body
           if [= 1 body.length]
-            make-pair expr body.first location
+            make-pair expr [body.get 0] location
             make-pair expr [make-list body location] location
         else:
           make-pair expr [same-line-rule] location
@@ -116,8 +116,8 @@
       when
         [and [not [is-word-symbol? expr]] [is-symbol?]]:
           while [is-symbol?]:
-            set expr [#apply-node [#array expr rules.word] [current-location]]
-          set expr.items [#array.append expr.items rules.rest]
+            set expr [#apply-node [#list expr rules.word] [current-location]]
+          set expr.items [#list.append expr.items rules.rest]
       when
         [is-token? ':']:
           location: [current-location]
@@ -130,7 +130,7 @@
       when
         [and [not [is-word-symbol? expr]] [is-symbol?]]:
           while [is-symbol?]:
-            set expr [#apply-node [#array expr rules.word] [current-location]]
+            set expr [#apply-node [#list expr rules.word] [current-location]]
       when
         [is-token? ':']:
           location: [current-location]
@@ -146,13 +146,13 @@
           expr: rules.expr
           when [and [not [is-word-symbol? expr]] [is-symbol?]]:
             while [is-symbol?]:
-              set expr [#apply-node [#array expr rules.word] [current-location]]
+              set expr [#apply-node [#list expr rules.word] [current-location]]
               set do-wrap? false
-            set expr.items [#array.append expr.items rules.rest]
+            set expr.items [#list.append expr.items rules.rest]
           rest: rules.rest
           next ']'
           if [or do-wrap? [rest.length .> 0]]
-            #apply-node [#array.append [#array expr] rest] expr.location
+            #apply-node [#list.append [#list expr] rest] expr.location
             expr
 
         else:

@@ -5,12 +5,16 @@
   col: 0
   char: ''
 
+  [current-location]:
+    #location filename line col
+
   [peek]:
     and [< [+ i char.length] str.length]
         [str.utf8-char-at [+ i char.length]]
 
   [advance]:
-    assert [not [is? char false]] 'passed the end'
+    when [is? char false]:
+      error-at [current-location] 'passed the end'
     (advance source location tracking)
     when
       [is? char '\n']:
@@ -40,9 +44,9 @@
   [continues-number?]: and char [not [is-in? '\n\t :[]()\'']]
 
   (output)
-  tokens: [#array]
+  tokens: [#list]
   [emit token]:
-    location: #location filename line col
+    location: [current-location]
     tokens.push [#token-node token location]
     [discard]
 
@@ -73,7 +77,7 @@
         [skip-comment]
 
   (tracking indentation)
-  indent-levels: [#array -1]
+  indent-levels: [#list -1]
   paren-level: 0
   [current-indent]: indent-levels.peek
 
@@ -119,11 +123,21 @@
     while [continues-number?]:
       [advance]
     emit [pending-text]
+    when [continues-word?]:
+      error-at [current-location] 'invalid text after number'
+
+  [read-dash]:
+    [advance]
+    when
+      [continues-number?]: [read-number]
+      [continues-word?]:   [read-word]
+      else:                emit [pending-text] (just a dash)
 
   [read-string]:
-    out: [#array]
+    out: [#list]
     [put str]:
-      assert [#string.? str] 'tried to put non-string in read-string'
+      when [not [#string.? str]]:
+        error-at [current-location] 'tried to put non-string in read-string'
       out.push str
 
     [advance]
@@ -150,6 +164,7 @@
   [read-token]:
     [skip-space]
     when
+      [is-char? '-']:    [read-dash]
       [begins-number?]:  [read-number]
       [begins-word?]:    [read-word]
       [is-char? '\'']:   [read-string]
@@ -170,7 +185,7 @@
         [discard]
         [read-new-line]
       else:
-        assert false [combine-strings 'unknown character: ' char]
+        error-at [current-location] [combine-strings 'unknown character: ' char.to-string]
       
   [read-new-line]
   [skip-space]

@@ -9,11 +9,11 @@
   [a .<= b]: [&<= a b]
   [a .>= b]: [&>= a b]
 
-  [self.length        ]: &string-length self
-  [self.substring i j ]: &string-substring self i j
+  [self.length         ]: &string-length self
+  [self.substring i j  ]: &string-substring self i j
   [self.contains? other]: &string-contains? self other
-  [self.concat   other]: &string-concat self other
-  [self.utf8-char-at i]: &utf8-char-at self i
+  [self.concat    other]: &string-concat self other
+  [self.utf8-char-at i ]: &utf8-char-at self i
   [self.to-number]:
     num: &string-to-number self
     or num false
@@ -60,77 +60,6 @@ else: true
   [self.each f]: self.iterator.each f
   [self.all? f]: self.iterator.all? f
 
-#list: # #collection
-  [. .? a]: has? a #list
-
-  [.]: #list.nil
-  [. a b..]: #list.link a [#list b..]
-
-  [. .link first rest]: 
-    assert [#list.? rest] 'tried to link to non-list'
-    # #list
-      .first: first
-      .rest: rest
-
-  [. .nil]: nil
-
-  [self.iterator]: #list-iterator self
-  [self.empty?]: is? self nil
-
-  [self.get i]:
-    assert [not self.empty?] 'tried to get element from past end of list'
-    if [i .> 0]
-      self.rest.get [i .- 1]
-      self.first
-
-  [self.drop i]:
-    assert [or [i .= 0] [not self.empty?]] 'tried to drop more elements than in list'
-    if [i .> 0]
-      self.rest.drop [i .- 1]
-      self
-
-  [self.length]:
-    if self.empty?
-      0
-      + 1 self.rest.length
-
-  [self.map f]: [self.iterator.map f].to-list
-
-  append: #
-    [. list]:
-      assert [#list.? list] 'tried to append non-list'
-      list
-    [. list lists..]:
-      assert [#list.? list] 'tried to append non-list'
-      if list.empty?
-        append lists..
-        [#list.link list.first [append list.rest lists..]]
-
-  (for some reason the interpreter fails if i try and implement .append as a field)
-  [. .append lists..]: append lists..
-
-  [self.last]:
-    assert [not self.empty?] 'cant get last item of empty list'
-    if self.rest.empty?
-      self.first
-      self.rest.last
-
-  [self.without-last]:
-    assert [not self.empty?] 'cant remove last item of empty list'
-    if self.rest.empty?
-      #list.nil
-      #list.link self.first self.rest.without-last
-
-  [self.reverse]:
-    result: [#list]
-    self.each [. i]:
-      set result [#list.link i result]
-    result
-
-(can't create this in #list because it doesn't work if i do)
-(probably i can't make instances of classes before the class is finished being defined)
-nil: # #list
-
 #iterator: #
   [self.map f]: # #iterator
     [. .empty?]: self.empty?
@@ -143,22 +72,11 @@ nil: # #list
       self.advance
 
   [self.to-list]:
-    [loop]:
-      when
-        self.empty?:
-          #list.nil
-        else:
-          first: self.item
-          self.advance
-          #list.link first [loop]
-    [loop]
-
-  [self.to-array]:
-    array: [#array]
+    list: [#list]
     while [not self.empty?]:
-      array.push self.item
+      list.push self.item
       self.advance
-    array
+    list
 
   [self.skip n]:
     while [0 .< n]:
@@ -173,32 +91,20 @@ nil: # #list
       self.advance
     result
 
-#list-iterator: # #iterator
-  [. list]: # #list-iterator
-    .list: list
-  [self.empty?]:  self.list.empty?
-  [self.item]:    self.list.first
-  [self.advance]: set self.list self.list.rest
+#list: # #collection
+  [. .? a]: has? a #list
 
-#array: # #collection
-  [. .? a]: has? a #array
-
-  [.]: # #array
+  [.]: # #list
     .length: 0
 
   [. a..]:
-    array: [#array]
-    loop: #
-      [.]: false
-      [. a b..]:
-        array.push a
-        loop b..
-    [loop a..]
-    array
+    list: [#list]
+    [&lua-get 'assign_values_to_array'] list a..
+    list
 
   [. .append lists..]:
-    result: [#array]
-    [#array lists..].each [. a]:
+    result: [#list]
+    [#list lists..].each [. a]:
       result.push-items a
     result
 
@@ -215,25 +121,28 @@ nil: # #list
     set self.length [self.length .+ 1]
 
   [self.pop]:
-    assert [0 .< self.length] 'cant pop empty array'
+    assert [0 .< self.length] 'cant pop empty list'
     set self.length [self.length .- 1]
     value: &lua-get-index self self.length
     &lua-remove-index self self.length
     value
 
   [self.peek]:
-    assert [0 .< self.length] 'cant peek empty array'
+    assert [0 .< self.length] 'cant peek empty list'
     self.get [self.length .- 1]
 
   [self.push-items items]:
     items.each [. i]: [self.push i]
 
-  [self.iterator]: #array-iterator self
+  [self.empty?]:
+    self.length .= 0
 
-  [self.drop n]: [self.iterator.skip n].to-array
+  [self.iterator]: #list-iterator self
+
+  [self.drop n]: [self.iterator.skip n].to-list
 
   [self.drop-last n]:
-    result: [#array]
+    result: [#list]
     i: 0
     end: self.length .- n
     while [i .< end]:
@@ -245,7 +154,7 @@ nil: # #list
     self.get [self.length .- 1]
 
   [self.map f]:
-    result: [#array]
+    result: [#list]
     i: 0
     len: self.length
     while [i .< len]:
@@ -276,69 +185,69 @@ nil: # #list
       f [self.get i]
       set i [i .+ 1]
 
-#array-iterator: # #iterator
-  [. array]: # #array-iterator
-    .array: array
+#list-iterator: # #iterator
+  [. list]: # #list-iterator
+    .list: list
     .index: 0
-  [self.empty?]:  self.array.length .<= self.index
-  [self.item]:    self.array.get self.index
+  [self.empty?]:  self.list.length .<= self.index
+  [self.item]:    self.list.get self.index
   [self.advance]:
     assert [not self.empty?]
     set self.index [self.index .+ 1]
 
-#hash: #
-  [. .? a]: has? a #hash
+#table: #
+  [. .? a]: has? a #table
 
-  [.]: # #hash
-    .%index: [#]
+  [.]: # #table
+    .-index: [#]
 
   [. pairs..]:
-    hash: [#hash]
+    table: [#table]
     loop: #
       [.]: false
       [. pair pairs..]:
-        hash.set pair.key pair.value
+        table.set pair.key pair.value
         loop pairs..
     [loop pairs..]
-    hash
+    table
 
   [self.has? key]:
-    &lua-has-index? self.%index key
+    &lua-has-index? self.-index key
 
   [self.set key value]:
-    &lua-set-index self.%index key value
+    &lua-set-index self.-index key value
 
   [self.get key]:
-    &lua-get-index self.%index key
+    &lua-get-index self.-index key
 
   [self.get-or key default]:
     if [self.has? key]
-      &lua-get-index self.%index key
+      &lua-get-index self.-index key
       default
 
   [self.remove key]:
-    &lua-remove-index self.%index key
+    &lua-remove-index self.-index key
 
   [self.key-iterator]:
-    #hash-key-iterator self
+    #table-key-iterator self
 
   [self.pair-iterator]:
     self.key-iterator.map [. key]:
       #pair key [self.get key]
 
-#hash-key-iterator: # #iterator
-  [. hash]: # #hash-key-iterator
-    .hash: hash
+#table-key-iterator: # #iterator
+  [. table]: # #table-key-iterator
+    .table: table
     .first?: true
     .key: false
 
   (todo: redesign the low level interface to make this cleaner)
   [self.empty?]: if self.first?
-    not [&lua-has-next-index? self.hash.%index]
-    not [&lua-has-next-index? self.hash.%index self.key]
+    not [&lua-has-next-index? self.table.-index]
+    not [&lua-has-next-index? self.table.-index self.key]
   [self.item]: if self.first?
-    &lua-next-index self.hash.%index
-    &lua-next-index self.hash.%index self.key
+    &lua-next-index self.table.-index
+    &lua-next-index self.table.-index self.key
   [self.advance]:
     assert [not self.empty?]
     set self.key self.item
@@ -365,22 +274,24 @@ nil: # #list
 
 [combine-strings items..]:
   (combines lists-of-lists..-of-strings)
-  [flatten-to-array list]:
-    flat-array: [#array]
+  [flatten-to-list list]:
+    flat-list: [#list]
     [flatten-loop items]:
-      items.iterator.each [. item]:
+      items.each [. item]:
         if [#string.? item]
-          flat-array.push item
+          flat-list.push item
           flatten-loop item
     [flatten-loop list]
-    flat-array
-  [flatten-to-array [#array items..]].concat
+    flat-list
+  [flatten-to-list [#list items..]].concat
 
 [get-args n]:
-  arg: [&args n]
-  if arg
-    #list.link arg [get-args [+ n 1]]
-    [#list]
+  result: [#list]
+  n: 1
+  while [&args n]:
+    result.push [&args n]
+    set n [n .+ 1]
+  result
 
 [get-time]:
   [&get-time]
@@ -405,8 +316,7 @@ command-line-args: get-args 1
   .>=: >=
   .#collection: #collection
   .#list: #list
-  .#array: #array
-  .#hash: #hash
+  .#table: #table
   .#pair: #pair
   .read-file: read-file
   .write-file: write-file

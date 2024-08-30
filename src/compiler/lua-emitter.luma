@@ -1,0 +1,31 @@
+#lua-emitter: #
+  [.]: # #lua-emitter
+    .last-location: false
+    .location-to-emit: false
+    .buffer: [#list]
+  
+  [self.set-location location]:
+    set self.location-to-emit location
+
+  [self.put items..]:
+    when [and self.location-to-emit
+              [or [not self.last-location]
+                  [self.location-to-emit .~= self.last-location]]]:
+      self.buffer.push [combine-strings '--@ ' self.location-to-emit.to-string '\n']
+      set self.last-location self.location-to-emit
+      set self.location-to-emit false
+    [#list items..].each [. item]:
+      when
+        [#string.? item]:
+          self.buffer.push item
+        [#value.? item]:
+          item.emit
+          self.buffer.push item.id
+        else:
+          item.each [. i]: [self.put i]
+
+  [self.concat-result]:
+    self.buffer.concat
+
+#
+  .#lua-emitter: #lua-emitter

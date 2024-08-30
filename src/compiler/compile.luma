@@ -1,73 +1,15 @@
-emit-debug-info: true
-
-[key-<= a b]:
-  a-type-value: if [#number.? a] 0 1
-  b-type-value: if [#number.? b] 0 1
-  when
-    [a-type-value .< b-type-value]: true
-    [a-type-value .= b-type-value]: a .<= b
-    else:                           false
-      
-#type: #
-  [. .? a]: has? a #type
-  [.]: # #type
-    .call:      false (plain non-table function literal   false or return type)
-    .fields:    [#hash] (table fields     string -> true) (TODO: detect when they're always one type)
-    .functions: [#hash] (table functions  string -> return type)
-    .methods:   [#hash] (table methods    string -> return type)
-    .index:     false   (table index      false or type)
-
-  [self.to-string]:
-    out: [#array '[type']
-
-    [add-from-hash name hash]:
-      keys: hash.key-iterator.to-array
-      keys.sort key-<=
-      when [keys.length .> 0]:
-        out.push ' ['
-        out.push name
-        keys.each [. k]:
-          out.push ' '
-          out.push k.to-string
-          type: [hash.get k]
-          when [#type.? type]:
-            out.push ': '
-            out.push type.to-string
-        out.push ']'
-
-    [add-from-hash 'fields' self.fields]
-    [add-from-hash 'functions' self.functions]
-    [add-from-hash 'methods' self.methods]
-    when self.call:
-      out.push ' [call '
-      out.push self.call.to-string
-      out.push ']'
-    when self.index:
-      out.push ' [index '
-      out.push self.index.to-string
-      out.push ']'
-    out.push ']'
-    out.concat
-
-
-#value: #
-  [. .? a]: has? a #value
-  [. name]: # #value
-    .id: name
-    .type: [#type]
-
 [seq items..]:
-  (merges arrays and/or items into one array)
-  inputs: [#array items..]
-  result: [#array]
+  (merges lists and/or items into one list)
+  inputs: [#list items..]
+  result: [#list]
   inputs.each [. item]:
-    if [#array.? item]
+    if [#list.? item]
       result.push-items item
       result.push item
   result
 
 [comma-separate items]:
-  out: [#array]
+  out: [#list]
   iter: items.iterator
   when [not iter.empty?]:
     out.push iter.item
@@ -77,99 +19,33 @@ emit-debug-info: true
     out.push item
   out
 
-[words->ids words]:
-  words.map [. w]: [w.id]
-
 [is-function-vararg? f]:
   last-arg: and [f.params.length .> 0] f.params.last
   and last-arg [last-arg.contains? '..']
 
-[process-symbol-function-or-method exp]:
-  signature: exp.key
-  first: signature.items.get 0
-  symbol: signature.items.get 1
-  args: signature.items.drop 2
-  when
-    [#symbol-node.? first]:
-      assert-at [= '.' first.id] first 'invalid symbol in first position of function signature'
-      #symbol-function-node symbol.id [words->ids args] exp.value exp.location
-    else:
-      assert-at [#word-node.? first] first 'expected word node'
-      #symbol-method-node symbol.id [words->ids [#array.append [#array first] args]] exp.value exp.location
-
-[process-plain-function exp]:
-  signature: exp.key
-  first: signature.items.get 0
-  rest: signature.items.drop 1
-  when
-    [#word-node.? first]:
-      #binding-node first.id
-        #function-node [words->ids rest] exp.value exp.location
-    else:
-      assert-at [and [#symbol-node.? first] [= '.' first.id]] first 'function expects . or word in first position'
-      #function-node [words->ids rest] exp.value exp.location
-
-[process-pair exp is-table]:
-  when
-    [#apply-node.? exp.key]:
-      signature: exp.key
-      'could be a function, a named function, a symbol function, or a symbol method'
-      when
-        [and [2 .<= signature.items.length] [#symbol-node.? [signature.items.get 1]]]:
-          process-symbol-function-or-method exp
-        else:
-          process-plain-function exp
-    [#symbol-node.? exp.key]:
-      #field-node exp.key.id exp.value exp.location
-    else:
-      assert-at [#word-node.? exp.key] exp.key 'unknown key in pair'
-      #binding-node exp.key.id exp.value exp.location
-
-[process-pairs list is-table]:
-  list.map [. exp]:
-    if [#pair-node.? exp]
-      process-pair exp is-table
-      exp
-
 [compile exp]:
-  buffer: [#array]
-  location-to-emit: false
-  gensym-counts: [#hash]
+  emitter: [#lua-emitter]
+  emitter.set-location #location.unknown
+  name-counts: [#table]
+
+  [emit items..]:
+    emitter.put items..
   
+  [set-location location]: 
+    emitter.set-location location
+
   [gensym name]:
     safe-name: [safe-identifier name]
-    count: gensym-counts.get-or safe-name 0
+    count: name-counts.get-or safe-name 0
     id: combine-strings safe-name '__' count.to-string
-    gensym-counts.set safe-name [count .+ 1]
-    #value id
-
-
-  [set-location-info location]: 
-    when emit-debug-info:
-      set location-to-emit location
-
-  emit: #
-    [.]: true
-    [. item items..]:
-      when location-to-emit:
-        buffer.push [combine-strings '--@ ' location-to-emit.to-string '\n']
-        set location-to-emit false
-      when 
-        [#string.? item]:
-          buffer.push item
-        [#value.? item]:
-          emit item.id
-        else:
-          item.iterator.each [. i]: [emit i]
-        (else:
-          assert false [combine-strings 'tried to emit non-list non-string non-value: ' [&value-to-string item]])
-      emit items..
+    name-counts.set safe-name [count .+ 1]
+    #value.simple id
 
   [compile-number exp context]:
-    #value exp.value.to-string
+    #value.simple exp.value.to-string
 
   [compile-string exp context]:
-    #value [quote-string exp.value]
+    #value.simple [quote-string exp.value]
 
   [compile-word exp context]:
     context.lookup exp.id exp.location
@@ -192,8 +68,8 @@ emit-debug-info: true
             vararg: [context.lookup last-arg.id last-arg.location]
             list-without-vararg: list.drop-last 1
             n: combine-strings list-without-vararg.length.to-string ' + ' vararg.id '.n'
-            arg-strings: #array.append [compile-args [list.drop-last 1] context]
-                                       [#array [combine-strings 'unpack (' vararg.id ', 1, ' vararg.id '.n)']]
+            arg-strings: #list.append [compile-args [list.drop-last 1] context]
+                                       [#list [combine-strings 'unpack (' vararg.id ', 1, ' vararg.id '.n)']]
             #
               .n: n
               .static-n: false
@@ -203,23 +79,6 @@ emit-debug-info: true
               .n: list.length.to-string
               .static-n: list.length
               .args: compile-args list context
-
-  [find-method type symbol-str]:
-    (this figures out from the type where to get the method)
-    index-type: type.index
-    when
-      [and index-type [index-type.methods.has? symbol-str]]:
-        #
-          .path: seq '.index.methods [' [quote-string symbol-str] ']'
-          .type: [index-type.methods.get symbol-str]
-      index-type:
-        found: find-method index-type symbol-str
-        and found
-          #
-            .path: seq '.index' found.path
-            .type: found.type
-      else:
-        false
 
   [compile-apply exp context]:
     fn: exp.items.get 0
@@ -238,89 +97,56 @@ emit-debug-info: true
         'compile method arguments'
         compiled-args: prepare-args [args.drop 1] context
 
-        result-id: gensym 'apply_result'
-        emit 'local ' result-id ' = '
-        when
-          [fn-val.type.fields.has? symbol-id]:
-            when 
-              [is? 0 compiled-args.static-n]:
-                emit fn-val '[' quoted-symbol ']\n'
-              else:
-                (todo: should recurse and set type here)
-                emit 'invoke_symbol ('
-                field: combine-strings fn-val.id '[' quoted-symbol ']'
-                emit [comma-separate [seq field compiled-args.n compiled-args.args]]
-                emit ')\n'
-                (emit '-- ' fn-val ' :: ' fn-val.type.to-string '\n')
-          [fn-val.type.functions.has? symbol-id]:
-            emit fn-val '.functions[' quoted-symbol '] (' [comma-separate compiled-args.args] ')\n'
-            set result-id.type [fn-val.type.functions.get symbol-id]
-          else:
-            found-method: find-method fn-val.type symbol-id
-            when
-              found-method:
-                emit fn-val found-method.path '(' [comma-separate compiled-args.args] ')\n'
-                set result-id.type found-method.type
-              else:
-                emit 'invoke_symbol ('
-                emit [comma-separate [seq fn-val quoted-symbol compiled-args.n compiled-args.args]]
-                emit ')\n'
-                (emit '-- ' fn-val ' :: ' fn-val.type.to-string '\n')
-        result-id
+        buffer: [#lua-emitter]
+        buffer.put 'invoke_symbol ('
+        buffer.put [comma-separate [seq fn-val quoted-symbol compiled-args.n compiled-args.args]]
+        buffer.put ')'
+        #value buffer.concat-result
 
       else:
         'compile function arguments'
         compiled-args: prepare-args args context
 
-        result-id: gensym 'apply_result'
-        emit 'local ' result-id ' = '
-        when
-          fn-val.type.call:
-            emit fn-val ' (' [comma-separate compiled-args.args] ')\n'
-            set result-id.type fn-val.type.call
-          [fn-val.type.functions.has? compiled-args.static-n]:
-            emit fn-val '.functions[' compiled-args.n '] (' [comma-separate compiled-args.args] ')\n'
-            set result-id.type [fn-val.type.functions.get compiled-args.static-n]
-          [fn-val.type.functions.has? '..']:
-            emit fn-val '.functions[".."] (' [comma-separate compiled-args.args] ')\n'
-            set result-id.type [fn-val.type.functions.get '..']
-          else:
-            emit 'invoke ('
-            emit [comma-separate [seq fn-val compiled-args.n compiled-args.args]]
-            emit ')\n'
-            (emit '-- ' fn-val ' :: ' fn-val.type.to-string '\n')
-        result-id
+        buffer: [#lua-emitter]
+        buffer.put 'invoke ('
+        buffer.put [comma-separate [seq fn-val compiled-args.n compiled-args.args]]
+        buffer.put ')'
+        #value buffer.concat-result
 
   [compile-list exp context]:
     new-context: #context context
     result-id: gensym 'list_result'
 
     'convert pairs to bindings'
-    processed-items: process-pairs exp.items false
+    items: exp.items
 
     'wrap in function to reduce top-level locals'
     emit 'local ' result-id '\n'
-    emit '(function ()\n'
+    (this is hand-tuned, decrease when you hit the lua local limit)
+    (seems not to help performance much after 5, run_tests fails over 8 or so)
+    length-threshold: 5
+    when [items.length .> length-threshold]:
+      emit '(function ()\n'
 
     'declare locals'
     locals: [#list]
-    processed-items.each [. item]:
+    items.each [. item]:
       when [#binding-node.? item]:
         id: [gensym item.id]
-        set locals [#list.append locals [#list id]]
+        set id.simple true
+        locals.push id
         new-context.add item.id id
     when [not locals.empty?]:
       emit 'local ' [comma-separate locals] '\n'
 
     'run body'
-    when [processed-items.length .> 0]:
-      [processed-items.drop-last 1].each [. item]:
+    when [items.length .> 0]:
+      [items.drop-last 1].each [. item]:
         when
           [#binding-node.? item]:
             id: [new-context.lookup item.id item.location]
             compiled-value: [compile-exp item.value new-context]
             emit id ' = ' compiled-value '\n'
-            set id.type compiled-value.type
             ' TODO: use a primitive to set this instead of patching list like this'
             when
               [= '#number' item.id]: [emit 'ops.number = ' id '\n']
@@ -328,23 +154,26 @@ emit-debug-info: true
               [= '#bool'   item.id]: [emit 'ops.boolean = '   id '\n']
           else:
             'ignore return value until the last item'
-            [compile-exp item new-context]
-      last-item: processed-items.last
+            value: [compile-exp item new-context]
+            when [not value.simple]:
+              emit value '\n'
+      last-item: items.last
       assert-at [not [#binding-node.? last-item]] last-item 'lists cant end in a binding'
       compiled-value: [compile-exp last-item new-context]
       emit result-id ' = ' compiled-value '\n'
-      set result-id.type compiled-value.type
 
-    set-location-info #location.unknown
-    emit 'end)()\n'
+    set-location #location.unknown
+    when [items.length .> length-threshold]:
+      emit 'end)()\n'
     result-id
     
   [compile-function exp context]:
     fn-id: gensym 'fn'
     new-context: [#context context]
-    params: [#array]
+    params: [#list]
     exp.params.each [. param]:
       param-id: [gensym 'param']
+      set param-id.simple true
       params.push param-id
       new-context.add param param-id
     index: false
@@ -365,26 +194,23 @@ emit-debug-info: true
     return-value: [compile-exp exp.body new-context]
     emit 'return ' return-value '\n'
     emit 'end\n'
-    set fn-id.type.call return-value.type
     fn-id
 
   [compile-table exp context]:
     new-context: #context context
     'convert pairs to bindings'
-    processed-items: process-pairs exp.items true
+    items: exp.items
 
     'declare table'
     table-id: gensym 'table'
 
     emit 'local ' table-id '\n'
-    'wrap in function to reduce top-level locals'
-    emit '(function ()\n'
     'declare locals'
     locals: [#list]
-    processed-items.each [. item]:
+    items.each [. item]:
       when [#binding-node.? item]:
         id: [gensym item.id]
-        set locals [#list.append locals [#list id]]
+        locals.push id
         new-context.add item.id id
     when [not locals.empty?]:
       emit 'local ' [comma-separate locals] '\n'
@@ -394,70 +220,48 @@ emit-debug-info: true
     functions: [#list]
     methods: [#list]
     has-index: false
-    processed-items.each [. item]:
+    items.each [. item]:
       when
         [#binding-node.? item]:
           id: [new-context.lookup item.id item.location]
           compiled-value: [compile-exp item.value new-context]
           emit id ' = ' compiled-value '\n'
-          set id.type compiled-value.type
         [#field-node.? item]:
           id: compile-exp item.value new-context
-          set fields [#list.append fields
-            [#list '[' [quote-string item.id] '] = ' id ',\n']]
-          table-id.type.fields.set item.id true
+          fields.push [#list '[' [quote-string item.id] '] = ' id ',\n']
         [#function-node.? item]:
           fn-id: compile-function item new-context
           num-params: item.params.length
           when
             [is-function-vararg? item]:
-              set functions [#list.append functions [#list '[".."] = ' fn-id ',\n']]
-              table-id.type.functions.set '..' fn-id.type.call
+              functions.push [#list '[".."] = ' fn-id ',\n']
             else:
-              set functions [#list.append functions [#list '[' num-params.to-string '] = ' fn-id ',\n']]
-              table-id.type.functions.set num-params fn-id.type.call
+              functions.push [#list '[' num-params.to-string '] = ' fn-id ',\n']
         [#symbol-function-node.? item]:
           fn-id: compile-function item new-context
-          set functions [#list.append functions
-            [#list '[' [quote-string item.symbol] '] = ' fn-id ',\n']]
-          table-id.type.functions.set item.symbol fn-id.type
+          functions.push [#list '[' [quote-string item.symbol] '] = ' fn-id ',\n']
         [#symbol-method-node.? item]:
           fn-id: compile-function item new-context
-          set methods [#list.append methods
-            [#list '[' [quote-string item.symbol] '] = ' fn-id ',\n']]
-          table-id.type.methods.set item.symbol fn-id.type
+          methods.push [#list '[' [quote-string item.symbol] '] = ' fn-id ',\n']
         else:
           assert-at [not has-index] item 'table cant have multiple index values'
           set has-index true
           index-id: compile-exp item new-context
-          set fields [#list.append fields
-            [#list '["index"] = ' index-id ',\n']]
-          set table-id.type.index index-id.type
+          fields.push [#list '["index"] = ' index-id ',\n']
 
     'define table'
     emit table-id ' = {\n'
     emit fields
     when [not functions.empty?]:
-      emit 'functions = {\n'
-      emit functions
-      emit '},\n'
+      emit 'functions = {\n' functions '},\n'
     when [not methods.empty?]:
-      emit 'methods = {\n'
-      emit methods
-      emit '},\n'
+      emit 'methods = {\n' methods '},\n'
     emit '}\n'
-    set-location-info #location.unknown
-    emit 'end)()\n'
+    set-location #location.unknown
     table-id
 
-  [compile-pair exp context]:
-    assert-at [#apply-node.? exp.key] exp.key 'invalid pair as expression'
-    assert-at [exp.key.items.length .> 0] exp.key 'invalid pair as expression'
-    assert-at [is? '.' [exp.key.items.get 0].id] [exp.key.items.get 0] 'invalid pair as expression'
-    compile-exp [process-plain-function exp] context
-
   [compile-exp exp context]:
-    set-location-info exp.location
+    set-location exp.location
     result:
       when
         [#number-node.?   exp]:  compile-number   exp context
@@ -467,7 +271,6 @@ emit-debug-info: true
         [#list-node.?     exp]:  compile-list     exp context
         [#function-node.? exp]:  compile-function exp context
         [#table-node.?    exp]:  compile-table    exp context
-        [#pair-node.?     exp]:  compile-pair     exp context
         else: error-at exp [combine-strings 'unknown exp in compile-exp: ' exp.to-string]
     when [not [or [#value.? result] [#primitive-node.? result]]]:
       error-at exp 'compile-exp should return #value'
@@ -498,10 +301,10 @@ emit-debug-info: true
         result-id
 
     add-fn 'import' 1 [. items]:
-      #value 'true'
+      #value.simple 'true'
 
     add-macro 'provide' false [. exp context]:
-      #value 'true'
+      #value.simple 'true'
 
     [add-type-check name lua-type]:
       add-fn name 1 [. items]:
@@ -512,15 +315,6 @@ emit-debug-info: true
     add-type-check '&string?' 'string'
     add-type-check '&number?' 'number'
     add-type-check '&bool?'   'boolean'
-
-    (TODO: remove)
-    [add-type-constructor name lua-type]:
-      add-fn name 1 [. items]:
-        items.get 0
-
-    add-type-constructor '&#string' 'string'
-    add-type-constructor '&#number' 'number'
-    add-type-constructor '&#bool'   'boolean'
 
     add-lua-fn '&value-to-string' 1 'tostring'
     add-lua-fn '&string-to-number' 1 'tonumber'
@@ -577,7 +371,7 @@ emit-debug-info: true
       emit 'local ' file-id ' = assert (io.open (' [items.get 0] ', "w"))\n'
       emit file-id ':write (' [items.get 1] ')\n'
       emit file-id ':close ()\n'
-      #value 'true'
+      #value.simple 'true'
 
     [add-binop op lua-op]:
       add-fn op 2 [. items]:
@@ -596,10 +390,10 @@ emit-debug-info: true
     add-binop '&<=' '<='
     add-binop '&>=' '>='
 
-    context.add 'true' [#value 'true']
-    context.add 'false' [#value 'false']
+    context.add 'true' [#value.simple 'true']
+    context.add 'false' [#value.simple 'false']
 
-    context.add 'print' [#value 'print']
+    context.add 'print' [#value.simple 'print']
 
     add-binop 'is?' '=='
 
@@ -613,13 +407,13 @@ emit-debug-info: true
           'set local'
           target-id: context.lookup target.id target.location
           emit target-id ' = ' value-id '\n'
-          #value 'true'
+          #value.simple 'true'
         [and [#apply-node.? target] [and [= 2 target.items.length] [#symbol-node.? [target.items.get 1]]]]:
           'set field'
           target-obj-id: compile-exp [target.items.get 0] context
           sym-id: [target.items.get 1].id
           emit target-obj-id ' ["' sym-id '"] = ' value-id '\n'
-          #value 'true'
+          #value.simple 'true'
 
         else: error-at target [combine-strings 'unknown target in set: ' target.to-string]
 
@@ -641,7 +435,6 @@ emit-debug-info: true
       result-id: gensym 'result'
       emit 'local ' result-id '\n'
       assert-at [args.length .> 0] exp 'empty when'
-      (TODO: use iterator instead of using drop)
       [compile-branch iter]:
         first: iter.item
         iter.advance
@@ -652,13 +445,12 @@ emit-debug-info: true
         emit 'else\n'
         if [not iter.empty?]
           compile-branch iter
-          emit result-id ' = false \n'
+          emit result-id ' = false\n'
         emit 'end\n'
       [compile-branch args.iterator]
       result-id
         
     context.add 'cond' [context.lookup 'when' #location.unknown]
-
 
     add-macro 'while' 1 [. exp context]:
       args: exp.items.drop 1
@@ -671,7 +463,7 @@ emit-debug-info: true
       emit 'local _ = ' [compile-exp first.value context] '\n'
       emit condition-id ' = ' [compile-exp first.key context] '\n'
       emit 'end\n'
-      #value 'false'
+      #value.simple 'false'
 
     add-macro 'and' 2 [. exp context]:
       args: exp.items.drop 1
@@ -696,8 +488,9 @@ emit-debug-info: true
       result-id
 
     add-macro 'has?' 2 [. exp context]:
-      'todo: lock down what this is supposed to do'
-      'its slightly different from what the interpreter does'
+      (todo: lock down what this is supposed to do,
+       its slightly different from what the interpreter does,
+       for example it doesn't handle superclasses properly)
       args: exp.items.drop 1
       table: compile-exp [args.get 0] context
       'todo: handle symbol as second arg'
@@ -734,7 +527,7 @@ emit-debug-info: true
       val: args.get 1
       assert-at [#string-node.? str] str '&lua-set expects string literal'
       emit str.value ' = ' [compile-exp val context] '\n'
-      #value 'false'
+      #value.simple 'false'
 
     add-macro '&lua-has-index?' 2 [. exp context]:
       args: exp.items.drop 1
@@ -750,7 +543,7 @@ emit-debug-info: true
       index: [compile-exp [args.get 1] context]
       result-id: gensym 'result'
       emit 'local ' result-id ' = ' table ' [' index ']\n'
-      emit 'assert (' result-id ' ~= nil, "getting invalid index")'
+      emit 'assert (' result-id ' ~= nil, "getting invalid index")\n'
       result-id
       
     add-macro '&lua-set-index' 3 [. exp context]:
@@ -759,14 +552,14 @@ emit-debug-info: true
       index: [compile-exp [args.get 1] context]
       value: [compile-exp [args.get 2] context]
       emit table ' [' index '] = ' value '\n'
-      #value 'false'
+      #value.simple 'false'
 
     add-macro '&lua-remove-index' 2 [. exp context]:
       args: exp.items.drop 1
       table: [compile-exp [args.get 0] context]
       index: [compile-exp [args.get 1] context]
       emit table ' [' index '] = nil\n'
-      #value 'false'
+      #value.simple 'false'
 
     add-macro '&lua-has-next-index?' false [. exp context]:
       args: exp.items.drop 1
@@ -811,7 +604,7 @@ emit-debug-info: true
     add-macro 'new' false [. exp context]:
       (currently not used)
       assert-at [<= 2 exp.items.length] exp 'new takes at least one argument'
-      items: [#array]
+      items: [#list]
       fields: exp.items.drop 1
       when [not [#pair-node.? [fields.get 0]]]:
         items.push [fields.get 0]
@@ -819,9 +612,15 @@ emit-debug-info: true
 
       fields.each [. field]:
         assert-at [#pair-node.? field] field 'new takes pairs after first argument'
-        assert-at [#word-node.? field.key] field.key 'new takes word-keyed pairs after first argument'
-        pair: [#pair-node [#symbol-node [combine-strings '.' field.key.id]] field.value]
-        items.push pair
+        (assert-at [#word-node.? field.key] field.key 'new takes word-keyed pairs after first argument')
+        when
+          [#word-node.? field.key]:
+            items.push [#field-node [combine-strings '.' field.key.id] field.value]
+          [#symbol-node.? field.key]:
+            items.push [#field-node field.key.id field.value]
+          else:
+            error-at field.key 'new takes word-or-symbol-keyed pairs'
+
 
       compile-exp [#table-node items] context
       
@@ -832,7 +631,7 @@ emit-debug-info: true
   emit 'return ' [compile-exp exp base-context] '\n'
   emit 'end\n'
   emit 'return run_with_error_handler (top_level)\n'
-  buffer.concat
+  emitter.concat-result
 
 #
   .compile: compile

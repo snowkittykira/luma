@@ -2,30 +2,84 @@
   and [#word-node.? node] [= node.id word]
 
 [is-anon-key? node]:
-  and
-    and
-      #apply-node.? node
-      [node.items.length .> 0]
-    and
-      #symbol-node.? [node.items.get 0]
-      [= [node.items.get 0].id '.']
+  when 
+    [not [#apply-node.? node]]: false
+    [node.items.length .= 0]: false
+    [and [#symbol-node.? [node.items.get 0]]
+         [= [node.items.get 0].id '.']]:
+      when
+        [node.items.length .= 1]: true
+        [#symbol-node.? [node.items.get 1]]: false
+        else: true
+    else: false
+        
+[words->ids words]:
+  words.map [. w]: [w.id]
+
+[process-symbol-function-or-method exp]:
+  signature: exp.key
+  first: signature.items.get 0
+  symbol: signature.items.get 1
+  args: signature.items.drop 2
+  when
+    [#symbol-node.? first]:
+      assert-at [= '.' first.id] first 'invalid symbol in first position of function signature'
+      #symbol-function-node symbol.id [words->ids args] exp.value exp.location
+    else:
+      assert-at [#word-node.? first] first 'expected word node'
+      #symbol-method-node symbol.id [words->ids [#list.append [#list first] args]] exp.value exp.location
+
+[process-plain-function exp]:
+  signature: exp.key
+  first: signature.items.get 0
+  rest: signature.items.drop 1
+  when
+    [#word-node.? first]:
+      #binding-node first.id
+        #function-node [words->ids rest] exp.value exp.location
+    else:
+      assert-at [and [#symbol-node.? first] [= '.' first.id]] first 'function expects . or word in first position'
+      #function-node [words->ids rest] exp.value exp.location
+
+[process-pair exp is-table]:
+  when
+    [#apply-node.? exp.key]:
+      signature: exp.key
+      'could be a function, a named function, a symbol function, or a symbol method'
+      when
+        [and [2 .<= signature.items.length] [#symbol-node.? [signature.items.get 1]]]:
+          process-symbol-function-or-method exp
+        else:
+          process-plain-function exp
+    [#symbol-node.? exp.key]:
+      #field-node exp.key.id exp.value exp.location
+    else:
+      assert-at [#word-node.? exp.key] exp.key 'unknown key in pair'
+      #binding-node exp.key.id exp.value exp.location
+
+[process-pairs list is-table]:
+  list.map [. exp]:
+    if [#pair-node.? exp]
+      process-pair exp is-table
+      exp
 
 [resolve root-node]:
 
   [resolve-table node]:
-    items: [node.items.drop 1].map resolve-node
-    (TODO: convert pairs to other nodes)
+    items: process-pairs [[node.items.drop 1].map resolve-node] true
     #table-node items node.location
 
   [resolve-list node]:
-    items: [node.items.drop 1].map resolve-node
-    (TODO: convert pairs to other nodes)
+    items: process-pairs [[node.items.drop 1].map resolve-node] false
     #list-node items node.location
     
   [resolve-pair node]:
     items: [node.items.drop 1].map resolve-node
     assert [= 2 items.length] 'pair needs two items at ' node.location.to-string
-    #pair-node [items.get 0] [items.get 1] node.location
+    pair: #pair-node [items.get 0] [items.get 1] node.location
+    if [is-anon-key? pair.key]
+      process-plain-function pair
+      pair
 
   [resolve-apply node]:
     assert [node.items.length .> 0] [combine-strings 'empty apply node at ' node.location.to-string]
