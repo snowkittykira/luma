@@ -10,8 +10,8 @@ for an introduction to the language
 to compile the compiler:
 
 - run `./build-compiler.sh` from the `src/` directory
-- the built compiler is output to `build/compile-luma-built.lua`,
-  and any diffs from `build/compile-luma.lua` are shown
+- the built compiler is output to `build/luma-compile-built.lua`,
+  and any diffs from `build/luma-compile.lua` are shown
 
 to use in a project:
 
